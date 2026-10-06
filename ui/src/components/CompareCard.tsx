@@ -31,7 +31,6 @@ export function CompareCard({ t, game, meName, people, reloadKey }: Props) {
 
   useEffect(() => {
     let alive = true;
-    setData(null);
     (async () => {
       const mine = await api.history(game, "").catch(() => [] as RunSummary[]);
       const others = await Promise.all(
