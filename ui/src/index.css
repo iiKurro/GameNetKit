@@ -1,15 +1,19 @@
 @import "tailwindcss";
 
+/*
+  GameNetKit: a quiet instrument panel. Ink background, hairline borders, one phosphor-green signal colour that means "good link";
+  amber and red only ever mean "worse link". Dark is the default, light is a paper version of the same panel.
+*/
 @theme {
-  --font-sans: "Segoe UI", "Tahoma", system-ui, sans-serif;
-  --color-background: #0b0f14;
+  --font-sans: "Cairo Variable", "Segoe UI", "Tahoma", system-ui, sans-serif;
+  --color-background: #0a0e13;
   --color-foreground: #e8edf3;
-  --color-card: #121820;
+  --color-card: #11171f;
   --color-card-foreground: #e8edf3;
-  --color-border: #222c38;
-  --color-muted: #1a222c;
-  --color-muted-foreground: #8b98a8;
-  --color-accent: #17202b;
+  --color-border: #212b37;
+  --color-muted: #18202a;
+  --color-muted-foreground: #8d9aab;
+  --color-accent: #16202b;
   --color-primary: #35d07f;
   --color-primary-foreground: #04120a;
   --color-success: #35d07f;
@@ -18,23 +22,94 @@
   --color-info: #4aa3ff;
 }
 
+:root {
+  color-scheme: dark;
+  --glow: rgba(53, 208, 127, 0.1);
+  --dot: rgba(139, 152, 168, 0.2);
+  --lift: 0 1px 0 rgba(255, 255, 255, 0.035) inset, 0 14px 30px -18px rgba(0, 0, 0, 0.7);
+  --scrim: rgba(3, 6, 10, 0.7);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-background: #eef1f5;
+  --color-foreground: #0e1621;
+  --color-card: #ffffff;
+  --color-card-foreground: #0e1621;
+  --color-border: #d8dfe7;
+  --color-muted: #e6ebf1;
+  --color-muted-foreground: #556275;
+  --color-accent: #e3e9f0;
+  --color-primary: #0a8a4b;
+  --color-primary-foreground: #ffffff;
+  --color-success: #0a8a4b;
+  --color-warning: #a65b00;
+  --color-destructive: #c42b28;
+  --color-info: #1565c0;
+  --glow: rgba(10, 138, 75, 0.09);
+  --dot: rgba(60, 80, 105, 0.16);
+  --lift: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 12px 26px -18px rgba(22, 40, 66, 0.35);
+  --scrim: rgba(14, 22, 33, 0.45);
+}
+
 html, body, #root { height: 100%; }
 html { overflow-y: auto; overflow-x: hidden; }
-body { overflow-wrap: break-word; }
-body { background: var(--color-background); color: var(--color-foreground); font-family: var(--font-sans); }
-.num { direction: ltr; unicode-bidi: isolate; display: inline-block; }
-@keyframes enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-.enter { animation: enter .45s cubic-bezier(.22,1,.36,1) both; }
-@media (prefers-reduced-motion: reduce) { .enter { animation: none; } }
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  overflow-wrap: break-word;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
 
-/* The parts of a page the browser draws by itself, themed so they belong to the app */
-:root { color-scheme: dark; accent-color: var(--color-primary); }
+/* the page behind everything: a faint dot grid that fades out downwards, and a soft glow where the signal comes from */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(760px 420px at 88% -8%, var(--glow), transparent 72%),
+    radial-gradient(var(--dot) 1px, transparent 1.4px);
+  background-size: auto, 26px 26px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 55%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 55%, transparent 100%);
+}
+
+/* compact: everything is sized in rem, so one number shrinks the whole app; the explanatory extras step aside */
+html[data-density="compact"] { font-size: 13.5px; }
+html[data-density="compact"] .hide-compact { display: none !important; }
+
+.num { direction: ltr; unicode-bidi: isolate; display: inline-block; font-variant-numeric: tabular-nums; }
+@keyframes enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.enter { animation: enter .45s cubic-bezier(.22, 1, .36, 1) both; }
+
+/* raised surface used by cards: a hairline of light on top and a soft, offset shadow below */
+.lift { box-shadow: var(--lift); }
+
+/* ---- the radar (idle / waiting / capturing) */
+@keyframes sweep { to { transform: rotate(360deg); } }
+@keyframes ring { from { transform: scale(0.35); opacity: 0.55; } to { transform: scale(1); opacity: 0; } }
+@keyframes blip { 0%, 100% { opacity: 0.35; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1.15); } }
+.sweep { animation: sweep var(--sweep-speed, 5s) linear infinite; transform-origin: 50% 50%; }
+.ring { animation: ring 3.2s cubic-bezier(.16, 1, .3, 1) infinite; transform-origin: 50% 50%; }
+.blip { animation: blip 2.4s ease-in-out infinite; transform-origin: 50% 50%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .enter { animation: none; }
+  .sweep, .ring, .blip { animation: none; }
+}
+
+/* ---- the parts of a page the browser draws by itself, themed so they belong to the app */
 ::selection { background: color-mix(in oklab, var(--color-primary) 38%, transparent); color: var(--color-foreground); }
 /* no scroll bars anywhere: the mouse wheel / touch / keyboard scroll as usual */
 * { scrollbar-width: none; }
 *::-webkit-scrollbar { display: none; width: 0; height: 0; }
-.num, table, select, input { font-variant-numeric: tabular-nums; }
+:root { accent-color: var(--color-primary); }
 :focus-visible { outline: 2px solid color-mix(in oklab, var(--color-primary) 75%, transparent); outline-offset: 2px; }
 /* components that draw their own focus ring (Tailwind focus-visible:ring) do not also get the outline; every other button does */
 [class*="focus-visible:"]:focus-visible, [role=tab]:focus-visible, [role=switch]:focus-visible { outline: none; }
-select, input { color-scheme: dark; }
+table, select, input { font-variant-numeric: tabular-nums; }
+select, input { color-scheme: inherit; }
