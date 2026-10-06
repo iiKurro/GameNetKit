@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "1.0.2";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "1.0.3";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -56,6 +56,9 @@ namespace GameNetKit
             // demo runs live in their own folder so they can never touch real results, blocks or a running instance
             if (args.ContainsKey("demo") && !args.ContainsKey("worker") && !args.ContainsKey("fw")) { DemoMode = true; DataDir = Path.Combine(DataDir, "demo-data"); }
             if (args.ContainsKey("datadir")) { DataDir = args["datadir"]; InstanceSuffix = "." + ((uint)DataDir.ToLowerInvariant().GetHashCode()); }
+            // started by the "GameNetKit" Startup apps entry: ask the scheduled task to start the guard, then leave (no window, no admin prompt)
+            if (args.ContainsKey("start-guard")) { GuardInstall.RunTask(); return 0; }
+            if (args.ContainsKey("regiontest")) return RegionTest(args["regiontest"]);
             if (args.ContainsKey("worker")) return Worker.Run(args);
             if (args.ContainsKey("fw")) return Firewall.Run(args);
             if (args.ContainsKey("guard")) return Guard.Run();
@@ -125,6 +128,23 @@ namespace GameNetKit
             }
             sb.AppendLine("udp ports of this process: " + CountPorts());
             File.WriteAllText(Path.Combine(DataDir, "selftest.txt"), sb.ToString());
+            return 0;
+        }
+
+        // --regiontest <ip>: measures one address through its cloud region and writes the result to regiontest.txt (for checking the fallback by hand)
+        static int RegionTest(string ip)
+        {
+            Directory.CreateDirectory(DataDir);
+            Analyzer.CacheDir = DataDir;
+            var sb = new StringBuilder();
+            var rg = Analyzer.RegionOf(ip);
+            sb.AppendLine("region: " + (rg == null ? "unknown" : rg.Provider + ":" + rg.Region));
+            if (rg != null)
+            {
+                var ps = Analyzer.MeasureRegion(rg, 10);
+                sb.AppendLine(ps == null ? "no answer" : "avg=" + ps.Avg + " max=" + ps.Max + " jitter=" + ps.Jitter + " loss=" + ps.Loss + " verdict=" + Analyzer.Verdict(ps));
+            }
+            File.WriteAllText(Path.Combine(DataDir, "regiontest.txt"), sb.ToString());
             return 0;
         }
 
@@ -366,7 +386,10 @@ namespace GameNetKit
                     case "/api/sync/state": result = SyncState(); break;
                     case "/api/sync/config": result = SyncConfigure(ReadBody(ctx)); break;
                     case "/api/sync/now": result = SyncNow(); break;
-                    case "/api/sync/deletemine": result = SyncDeleteMine(); break;
+                    case "/api/admin/unlock": result = AdminUnlock(ReadBody(ctx)); break;
+                    case "/api/admin/lock": result = AdminLock(); break;
+                    case "/api/admin/players": result = AdminPlayers(); break;
+                    case "/api/admin/delete": result = AdminDelete(ReadBody(ctx)); break;
                     case "/api/settings": result = SettingsGet(); break;
                     case "/api/settings/set": result = SettingsSet(ReadBody(ctx)); break;
                     case "/api/guard/update": result = GuardInstallUpdate(); break;
