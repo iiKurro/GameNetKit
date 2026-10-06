@@ -38,7 +38,8 @@ export default function App() {
   const [updPhase, setUpdPhase] = useState<"idle" | "checking" | "updating">("idle");
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   const [fwError, setFwError] = useState("");
-  const [historyCount, setHistoryCount] = useState(0);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const historyCount = Object.values(counts).reduce((a, b) => a + b, 0);
 
   const isBlocked = useCallback((ip: string) => blocks.some((b) => covers(b.ip, ip)), [blocks]);
 
@@ -53,8 +54,7 @@ export default function App() {
   }, []);
 
   const refreshHistoryCount = useCallback(async () => {
-    const r = await api.history().catch(() => []);
-    setHistoryCount(r.length);
+    setCounts(await api.historyCounts().catch(() => ({} as Record<string, number>)));
   }, []);
 
   useEffect(() => {
@@ -116,9 +116,26 @@ export default function App() {
     if (e) await unblockTarget(e.ip);
   }, [blocks, unblockTarget]);
 
+  // one admin prompt removes every rule the app made
   const unblockAll = useCallback(async () => {
-    for (const b of blocks) await unblockTarget(b.ip);
-  }, [blocks, unblockTarget]);
+    setFwError("");
+    const r = await api.unblockAll().catch(() => ({ ok: false, error: "x" } as { ok: boolean; error?: string; detail?: string }));
+    if (!r.ok) setFwError(fwMessage(r.error, r.detail));
+    await refreshBlocks();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshBlocks, lang]);
+
+  const addManual = useCallback(async (target: string) => {
+    setFwError("");
+    const r = await api.block(target, "", "").catch(() => ({ ok: false, error: "x" } as { ok: boolean; error?: string; detail?: string }));
+    if (!r.ok) setFwError(fwMessage(r.error, r.detail));
+    await refreshBlocks();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshBlocks, lang]);
+
+  const syncBlocks = useCallback(async () => {
+    setBlocks(await api.blocksSync().catch(() => [] as BlockEntry[]));
+  }, []);
 
   const p = state.phase;
   const running = p !== "idle" && p !== "done" && p !== "error";
@@ -241,10 +258,18 @@ export default function App() {
       )}
 
       {tab === "history" && (
-        <HistoryView t={t} isBlocked={isBlocked} onBlock={block} onUnblock={unblockFor} onChanged={setHistoryCount} />
+        <HistoryView
+          t={t}
+          games={info?.games.map((g) => g.name) ?? []}
+          counts={counts}
+          isBlocked={isBlocked}
+          onBlock={block}
+          onUnblock={unblockFor}
+          onChanged={refreshHistoryCount}
+        />
       )}
 
-      {tab === "blocked" && <BlockedView t={t} blocks={blocks} onUnblock={unblockTarget} onUnblockAll={unblockAll} />}
+      {tab === "blocked" && <BlockedView t={t} blocks={blocks} onUnblock={unblockTarget} onUnblockAll={unblockAll} onAdd={addManual} onSync={syncBlocks} />}
 
       {tab === "scan" && (
         <main className="grid flex-1 gap-5 lg:grid-cols-[330px_1fr]">
@@ -320,7 +345,7 @@ export default function App() {
               <>
                 <div className="enter flex flex-wrap items-center justify-between gap-3">
                   <h2 className="text-base font-semibold">{t("resultsTitle")} · {state.game}</h2>
-                  <Button variant="secondary" size="sm" onClick={() => api.openFolder()}>
+                  <Button variant="secondary" size="sm" onClick={() => api.openFolder(state.game)}>
                     <FolderOpen /> {t("openFolder")}
                   </Button>
                 </div>
