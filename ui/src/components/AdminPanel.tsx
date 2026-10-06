@@ -115,7 +115,7 @@ export function AdminPanel({ t, unlocked, onUnlocked, onLocked, onClose }: Props
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" role="dialog" aria-modal="true" aria-labelledby="admin-title">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] p-4" role="dialog" aria-modal="true" aria-labelledby="admin-title">
       <div ref={box} className="enter flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-border p-5">
           <div className="flex items-center gap-3">
