@@ -5,7 +5,10 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Management;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace GameNetKit
 {
@@ -47,6 +50,45 @@ namespace GameNetKit
                 }
             }
             catch (Exception e) { Program.Log("closing old windows failed: " + e.Message); }
+        }
+
+        // ------------------------------------------------------------------ "already running": bring the window forward
+        delegate bool EnumProc(IntPtr h, IntPtr l);
+        [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
+        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+        [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+        [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+        [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+        [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+        [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int n);
+
+        // Finds the running app's window and shows it (restoring it if minimized). false = there is none to show.
+        bool FocusExistingWindow()
+        {
+            try
+            {
+                var pids = new HashSet<uint>(WindowProcessIds().Select(i => (uint)i));
+                if (pids.Count == 0) return false;
+                IntPtr found = IntPtr.Zero;
+                EnumWindows((h, l) =>
+                {
+                    uint pid;
+                    GetWindowThreadProcessId(h, out pid);
+                    if (!pids.Contains(pid) || !IsWindowVisible(h)) return true;
+                    var title = new StringBuilder(256);
+                    GetWindowText(h, title, 256);
+                    if (title.ToString() == "GameNetKit") { found = h; return false; }
+                    return true;
+                }, IntPtr.Zero);
+                if (found == IntPtr.Zero) return false;
+                if (IsIconic(found)) ShowWindow(found, 9);   // SW_RESTORE
+                keybd_event(0x12, 0, 0, UIntPtr.Zero);       // a tap on Alt lets this process take the foreground
+                SetForegroundWindow(found);
+                keybd_event(0x12, 0, 2, UIntPtr.Zero);
+                return true;
+            }
+            catch (Exception e) { Program.Log("could not bring the window forward: " + e.Message); return false; }
         }
     }
 }
