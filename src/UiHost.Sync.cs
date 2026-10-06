@@ -484,7 +484,8 @@ namespace GameNetKit
             {
                 { "player", new Dictionary<string, object> { { "id", myId }, { "name", myName } } },
                 { "runs", chunk.Select(k => (object)new Dictionary<string, object>
-                    { { "id", k.Value["id"] }, { "game", k.Value["game"] }, { "time", k.Value.ContainsKey("time") ? k.Value["time"] : "" }, { "results", k.Value["results"] } }).ToList() }
+                    { { "id", k.Value["id"] }, { "game", k.Value["game"] }, { "time", k.Value.ContainsKey("time") ? k.Value["time"] : "" }, { "results", k.Value["results"] },
+                      { "net", k.Value.ContainsKey("net") ? k.Value["net"] : null } }).ToList() }
             };
             try
             {
@@ -556,6 +557,9 @@ namespace GameNetKit
 
             string time = Convert.ToString(run["time"]);
             var clean = new Dictionary<string, object> { { "id", rid }, { "time", time.Length > 20 ? "" : time }, { "game", game }, { "results", results } };
+            var netIn = run.ContainsKey("net") ? run["net"] as Dictionary<string, object> : null;
+            if (netIn != null && netIn.ContainsKey("isp"))
+                clean["net"] = new Dictionary<string, object> { { "isp", CleanLabel(Convert.ToString(netIn["isp"])) }, { "country", netIn.ContainsKey("country") ? CleanLabel(Convert.ToString(netIn["country"])) : "" } };
             string gslug = Program.Slug(game);
             if (pid == myId)
             {
