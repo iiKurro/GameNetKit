@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Ban, LoaderCircle, ShieldOff } from "lucide-react";
 import type { ServerResult } from "@/api";
 import type { Key } from "@/i18n";
@@ -88,6 +88,11 @@ export function ResultCard({ s, t, first, delay = 0, blocked, game, onBlock, onU
           <ServerCardMeter label={t("ping")} value={s.avg} display={`${s.avg} ms`} max={200} thresholds={[60, 100]} />
           <ServerCardMeter label={t("jitter")} value={s.jitter ?? 0} display={`${s.jitter ?? 0} ms`} max={40} thresholds={[8, 15]} />
           <ServerCardMeter label={t("loss")} value={s.loss} display={`${s.loss}%`} max={10} thresholds={[1, 3]} />
+          {s.via && (
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              {t("viaNote")} <span className="num">{s.via.replace(":", " · ")}</span>
+            </p>
+          )}
         </div>
       )}
 
