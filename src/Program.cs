@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.6.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "0.7.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -279,6 +279,13 @@ namespace GameNetKit
                     case "/api/reset": try { File.Delete(statePath); } catch { } ClearFlags(); result = Ok(); break;
                     case "/api/openfolder": OpenFolder(ReadBody(ctx)); result = Ok(); break;
                     case "/api/heartbeat": seenBeat = true; lastBeat = DateTime.Now; result = Ok(); break;
+                    case "/api/profile": result = ProfileGet(); break;
+                    case "/api/profile/set": result = ProfileSet(ReadBody(ctx)); break;
+                    case "/api/people": result = PeopleList(); break;
+                    case "/api/people/import": result = PeopleImport(ReadBody(ctx)); break;
+                    case "/api/people/delete": result = PeopleDelete(ReadBody(ctx)); break;
+                    case "/api/history/exportall": result = HistoryExportAll(); break;
+                    case "/api/opendata": OpenData(); result = Ok(); break;
                     case "/api/blocks": result = Blocks(); break;
                     case "/api/blocks/sync": result = SyncBlocks(); break;
                     case "/api/guard": result = GuardState(); break;
@@ -351,7 +358,7 @@ namespace GameNetKit
 
         Dictionary<string, object> Info()
         {
-            return new Dictionary<string, object> { { "version", Program.Version }, { "repo", Program.Repo }, { "games", Games() } };
+            return new Dictionary<string, object> { { "version", Program.Version }, { "repo", Program.Repo }, { "games", Games() }, { "dataDir", Program.DataDir } };
         }
 
         // ------------------------------------------------------------------ run control
