@@ -4,7 +4,7 @@ import { ProfileDialog } from "@/components/ProfileDialog";
 import { motion } from "motion/react";
 import { AnimatedTabs } from "@/components/ui/animated-tabs";
 import { SettingsPopover } from "@/components/SettingsPopover";
-import { api, type BlockEntry, type GuardState, type Info, type Person, type Profile, type RunSummary, type Settings, type ServerResult, type State, type UpdateInfo } from "@/api";
+import { api, type BlockEntry, type GuardState, type Info, type Person, type Profile, type RunSummary, type Settings, type SyncState, type ServerResult, type State, type UpdateInfo } from "@/api";
 import { makeT, type Lang, type Key } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { covers } from "@/lib/cidr";
@@ -52,7 +52,8 @@ export default function App() {
   const [guard, setGuard] = useState<GuardState>({ running: false, games: [], applied: [] });
   const [profile, setProfile] = useState<Profile | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
-  const [editName, setEditName] = useState(false);
+  const [dialog, setDialog] = useState<null | "name" | "code">(null);
+  const [sync, setSync] = useState<SyncState | null>(null);
   const [lost, setLost] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [settingBusy, setSettingBusy] = useState("");
@@ -61,9 +62,23 @@ export default function App() {
     setPeople(await api.people().catch(() => [] as Person[]));
   }, []);
 
-  const saveName = useCallback(async (name: string) => {
-    const r = await api.profileSet(name).catch(() => null);
-    if (r && r.name) { setProfile(r); setEditName(false); }
+  const refreshSync = useCallback(async () => {
+    setSync(await api.syncState().catch(() => null));
+  }, []);
+
+  // name and (optionally) the group code from the dialog
+  const saveProfile = useCallback(async (name: string, code: string) => {
+    if (name && name !== profile?.name) {
+      const r = await api.profileSet(name).catch(() => null);
+      if (r && r.name) setProfile(r);
+    }
+    if (code) { const s = await api.syncConfig({ code }).catch(() => null); if (s) setSync(s); }
+    setDialog(null);
+  }, [profile?.name]);
+
+  const toggleSync = useCallback(async (enabled: boolean) => {
+    const s = await api.syncConfig({ enabled }).catch(() => null);
+    if (s) setSync(s);
   }, []);
   const historyCount = Object.values(counts).reduce((a, b) => a + b, 0);
 
@@ -139,8 +154,11 @@ export default function App() {
       .catch(() => { fails++; if (fails >= 2) setLost(true); });
     const beat = setInterval(beatOnce, 3000);
     beatOnce();
-    return () => { clearInterval(poll); clearInterval(guardPoll); clearInterval(beat); };
-  }, [refreshBlocks, refreshHistoryCount]);
+    // friends' scans arrive by themselves: look at the local files and the sharing state every few seconds
+    void refreshSync();
+    const sharePoll = setInterval(() => { void refreshSync(); void refreshPeople(); void refreshHistoryCount(); }, 6000);
+    return () => { clearInterval(poll); clearInterval(guardPoll); clearInterval(beat); clearInterval(sharePoll); };
+  }, [refreshBlocks, refreshHistoryCount, refreshSync, refreshPeople]);
 
   // a finished scan adds a history entry
   // a finished scan adds a history entry; the same history feeds the "this range keeps being bad" suggestion
@@ -148,6 +166,7 @@ export default function App() {
     if (state.phase !== "done") return;
     void refreshHistoryCount();
     api.history(state.game).then(setScanRows).catch(() => {});
+    api.syncNow().catch(() => {});   // share the new scan with the group right away
   }, [state.phase, state.game, refreshHistoryCount]);
 
   const checkUpdate = useCallback(async () => {
@@ -320,9 +339,14 @@ export default function App() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {profile && (
-            <Button variant="ghost" size="sm" onClick={() => setEditName(true)} title={t("profileEdit")}>
+            <Button variant="ghost" size="sm" onClick={() => setDialog("name")} title={t("profileEdit")}>
               <UserRound /> {profile.name || t("profileTitle")}
             </Button>
+          )}
+          {sync?.configured && sync.enabled && (
+            <Status variant={sync.error ? "warning" : "success"} title={t("syncTitle")}>
+              {t("syncChip")} <span className="num">{sync.players}</span>
+            </Status>
           )}
           {guard.running && <Status variant="success" pulse title={t("guardText")}>{t("guardTitle")}</Status>}
           {updPhase === "checking" && <Status variant="info" pulse>{t("checking")}</Status>}
@@ -337,7 +361,17 @@ export default function App() {
             <Languages />
             {t("lang")}
           </Button>
-          {settings && <SettingsPopover t={t} settings={settings} busyKey={settingBusy} onChange={changeSetting} />}
+          {settings && (
+            <SettingsPopover
+              t={t}
+              settings={settings}
+              busyKey={settingBusy}
+              onChange={changeSetting}
+              sync={sync}
+              onSyncToggle={toggleSync}
+              onChangeCode={() => setDialog("code")}
+            />
+          )}
         </div>
       </header>
 
@@ -427,7 +461,6 @@ export default function App() {
           insights={insights}
           peopleCount={people.length}
           onBlock={(s, game, range) => block(s, game, range, true)}
-          onGoImport={() => setTab("history")}
         />
       )}
 
@@ -589,8 +622,17 @@ export default function App() {
       </footer>
 
       {/* first run (no name yet) or "change name" */}
-      {profile && (!profile.name || editName) && (
-        <ProfileDialog t={t} profile={profile} required={!profile.name} onSave={saveName} onClose={() => setEditName(false)} />
+      {profile && (!profile.name || dialog) && (
+        <ProfileDialog
+          key={dialog ?? "first"}
+          t={t}
+          profile={profile}
+          mode={!profile.name ? "both" : dialog ?? "name"}
+          required={!profile.name}
+          syncConfigured={!!sync?.configured}
+          onSave={saveProfile}
+          onClose={() => setDialog(null)}
+        />
       )}
     </div>
   );
