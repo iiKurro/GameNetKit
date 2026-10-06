@@ -42,6 +42,6 @@ export function rangeStats(rows: RunSummary[]): RangeStat[] {
 }
 
 /** Ranges that keep giving a bad server and are not blocked yet (IPv4 only: only those can be blocked). */
-export function suggestions(stats: RangeStat[], isBlocked: (ip: string) => boolean): RangeStat[] {
-  return stats.filter((s) => !isV6(s.range) && s.bad >= 2 && s.bad / s.count >= 0.6 && !isBlocked(s.sample.ip));
+export function suggestions(stats: RangeStat[], isRangeBlocked: (range: string) => boolean): RangeStat[] {
+  return stats.filter((s) => !isV6(s.range) && s.bad >= 2 && s.bad / s.count >= 0.6 && !isRangeBlocked(s.range));
 }
