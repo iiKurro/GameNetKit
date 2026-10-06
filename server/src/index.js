@@ -92,7 +92,10 @@ function cleanRun(r) {
   if (!game || !Array.isArray(r.results) || r.results.length === 0 || r.results.length > MAX_RESULTS_PER_RUN) return null;
   const results = r.results.map(cleanResult);
   if (results.some((x) => x === null)) return null;
-  return { id: String(r.id), game, time: str(r.time, 20), results };
+  // which provider and country the player was connecting from (never an address): servers can be fine on one line and bad on another
+  const net = r.net && typeof r.net === "object" && typeof r.net.isp === "string"
+    ? { isp: str(r.net.isp, 60).trim(), country: str(r.net.country, 40).trim() } : null;
+  return { id: String(r.id), game, time: str(r.time, 20), results, net: net && net.isp ? net : null };
 }
 
 async function route(request, env) {
@@ -113,10 +116,10 @@ async function route(request, env) {
     const since = int(url.searchParams.get("since"), 0, Number.MAX_SAFE_INTEGER);
     const limit = int(url.searchParams.get("limit") || 300, 1, 300);
     const { results } = await env.DB.prepare(
-      "SELECT r.seq, r.player_id, p.name, r.game, r.run_id, r.time, r.results FROM runs r JOIN players p ON p.id = r.player_id WHERE r.seq > ? ORDER BY r.seq LIMIT ?",
+      "SELECT r.seq, r.player_id, p.name, r.game, r.run_id, r.time, r.results, r.net FROM runs r JOIN players p ON p.id = r.player_id WHERE r.seq > ? ORDER BY r.seq LIMIT ?",
     ).bind(since, limit).all();
     const runs = results.map((x) => ({
-      seq: x.seq, player: { id: x.player_id, name: x.name }, game: x.game, id: x.run_id, time: x.time, results: JSON.parse(x.results),
+      seq: x.seq, player: { id: x.player_id, name: x.name }, game: x.game, id: x.run_id, time: x.time, results: JSON.parse(x.results), net: x.net ? JSON.parse(x.net) : null,
     }));
     return json({ runs, next: runs.length ? runs[runs.length - 1].seq : since, more: runs.length === limit });
   }
@@ -161,8 +164,8 @@ async function route(request, env) {
     const clean = body.runs.map(cleanRun).filter(Boolean);
     if (clean.length) {
       await env.DB.batch(clean.map((r) =>
-        env.DB.prepare("INSERT OR IGNORE INTO runs (player_id, game, run_id, time, results, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-          .bind(id, r.game, r.id, r.time, JSON.stringify(r.results), Date.now()),
+        env.DB.prepare("INSERT OR IGNORE INTO runs (player_id, game, run_id, time, results, net, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(id, r.game, r.id, r.time, JSON.stringify(r.results), r.net ? JSON.stringify(r.net) : null, Date.now()),
       ));
     }
     return json({ ok: true, accepted: clean.length, rejected: body.runs.length - clean.length });
