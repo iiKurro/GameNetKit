@@ -111,7 +111,7 @@ namespace GameNetKit
         public static int Run()
         {
             bool created;
-            using (var mutex = new Mutex(true, Program.DemoMode ? "GameNetKit.Guard.Demo" : "GameNetKit.Guard", out created))
+            using (var mutex = new Mutex(true, (Program.DemoMode ? "GameNetKit.Guard.Demo" : "GameNetKit.Guard") + Program.InstanceSuffix, out created))
             {
                 if (!created) return 0;
                 Directory.CreateDirectory(Program.DataDir);
