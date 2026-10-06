@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.4.4";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "0.5.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -70,7 +70,11 @@ namespace GameNetKit
                 "\t 8.8.8.8.7777 > 192.168.1.5.54321: UDP, length 120",
                 "\t 192.168.1.5.54321 > 1.1.1.1.7777: UDP, length 40",
                 "\t 192.168.1.5.60000 > 9.9.9.9.53: UDP, length 40",
-                "\t 192.168.1.5.54321 > 192.168.1.1.53: UDP, length 40"
+                "\t 192.168.1.5.54321 > 192.168.1.1.53: UDP, length 40",
+                "\t 2a02:6b8:1::5.54321 > 2a00:1450:4009::65.7777: UDP, length 80",
+                "\t 2a00:1450:4009::65.7777 > 2a02:6b8:1::5.54321: UDP, length 120",
+                "\t fe80::1.54321 > ff02::fb.5353: UDP, length 40",
+                "\t 2a02:6b8:1::5.54321 > fd00::9.7777: UDP, length 40"
             };
             long parsed;
             var list = Analyzer.ParseCapture(sample, ports, out parsed);
