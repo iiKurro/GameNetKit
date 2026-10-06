@@ -3,12 +3,16 @@
   "private": true,
   "version": "0.2.0",
   "type": "module",
-  "scripts": { "dev": "vite", "build": "vite build" },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
   "dependencies": {
+    "clsx": "^2.1.1",
+    "country-flag-icons": "^1.6.20",
+    "lucide-react": "latest",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "lucide-react": "latest",
-    "clsx": "^2.1.1",
     "tailwind-merge": "^3.0.0"
   },
   "devDependencies": {
