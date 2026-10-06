@@ -52,6 +52,7 @@ namespace GameNetKit
             public string Code = "";
             public string Secret = "";
             public string Legacy = "";   // the secret version 1.0.0 derived from the code; sent only to upgrade an older registration
+            public string PlayerId = "";   // sent as x-player (needed by the delete call)
             public long Cursor;
             public HashSet<string> Pushed = new HashSet<string>();
         }
@@ -181,7 +182,8 @@ namespace GameNetKit
                 req.UserAgent = "GameNetKit/" + Program.Version;
                 req.Headers["x-group"] = c.Code;
                 req.Headers["x-player-secret"] = c.Secret;
-                if (c.Legacy != "" && method == "POST") req.Headers["x-player-upgrade"] = c.Legacy;
+                if (c.Legacy != "" && method != "GET") req.Headers["x-player-upgrade"] = c.Legacy;
+                if (c.PlayerId != "") req.Headers["x-player"] = c.PlayerId;
                 if (body != null)
                 {
                     byte[] data = Encoding.UTF8.GetBytes(js.Serialize(body));
@@ -202,7 +204,58 @@ namespace GameNetKit
             }
         }
 
+        // a sync cycle and "delete my scans from the server" never run at the same time
+        readonly object syncRun = new object();
+
         void SyncOnce()
+        {
+            lock (syncRun) SyncCycle();
+        }
+
+        // Removes everything this player uploaded from the server. It does not touch my own history on this PC, and every scan that
+        // exists now is marked as "already sent", so it is not uploaded again; scans made from now on are shared as usual.
+        object SyncDeleteMine()
+        {
+            if (!Monitor.TryEnter(syncRun, 30000)) return Fail("busy");
+            try
+            {
+                var c = LoadSync();
+                var me = ReadProfile();
+                if (c.Server == "" || c.Code == "" || me == null) return Fail("nocode");
+                string myId = Convert.ToString(me["id"]);
+                if (c.Secret == "") c.Secret = RandomHex(32);
+                c.PlayerId = myId;
+                using (var sha = SHA256.Create())
+                    c.Legacy = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(c.Code + "|" + myId + "|gamenetkit-player"))).Replace("-", "").ToLowerInvariant();
+                int removed = 0;
+                try
+                {
+                    var r = Call(c, "DELETE", "/v1/me", null);
+                    if (r.ContainsKey("removed")) removed = Convert.ToInt32(r["removed"]);
+                }
+                catch (SyncException e) { return Fail(e.Code); }
+                foreach (string key in LocalRunKeys()) c.Pushed.Add(key);
+                MergeSync(c);
+                syncWake.Set();
+                return new Dictionary<string, object> { { "ok", true }, { "removed", removed } };
+            }
+            finally { Monitor.Exit(syncRun); }
+        }
+
+        List<string> LocalRunKeys()
+        {
+            var keys = new List<string>();
+            if (!Directory.Exists(HistoryRoot)) return keys;
+            foreach (string gdir in Directory.GetDirectories(HistoryRoot))
+                foreach (string f in Directory.GetFiles(gdir, "*.json"))
+                {
+                    var run = LoadRun(f);
+                    if (run != null && run.ContainsKey("id") && run.ContainsKey("game")) keys.Add(Convert.ToString(run["game"]) + "|" + Convert.ToString(run["id"]));
+                }
+            return keys;
+        }
+
+        void SyncCycle()
         {
             var c = LoadSync();
             var me = ReadProfile();
