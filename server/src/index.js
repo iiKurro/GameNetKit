@@ -8,7 +8,8 @@
 //   GET    /v1/status           { players, runs }
 //   GET    /v1/runs?since=N     scans with seq > N (oldest first, at most 300), { runs, next, more }
 //   POST   /v1/runs             { player: { id, name }, runs: [ ... ] }  headers: x-player-secret
-//   DELETE /v1/me               removes the caller's scans and player record
+//   GET    /v1/admin/players    (header x-admin) every player with scan counts per game
+//   POST   /v1/admin/delete     (header x-admin) { player, game? } removes scans (and the player when no game is given)
 // Every call except "/" needs the header  x-group: <group code>.
 
 const MAX_BODY = 256 * 1024;      // bytes of JSON per upload
@@ -72,6 +73,7 @@ function cleanResult(r) {
     host: str(r.host, 120),
     packets: int(r.packets, 0, 1e9),
     kb: int(r.kb, 0, 1e9),
+    via: str(r.via, 40),   // "gcp:europe-west1" / "aws:eu-west-1" when the ping was measured through the cloud region
     avg: numOrNull(r.avg, 5000),
     max: numOrNull(r.max, 5000),
     jitter: numOrNull(r.jitter, 5000),
@@ -157,20 +159,37 @@ async function route(request, env) {
     return json({ ok: true, accepted: clean.length, rejected: body.runs.length - clean.length });
   }
 
-  if (url.pathname === "/v1/me" && request.method === "DELETE") {
-    const id = request.headers.get("x-player") || "";
-    const secret = request.headers.get("x-player-secret") || "";
-    if (!PLAYER_RX.test(id)) return json({ error: "bad player" }, 400);
-    const row = await env.DB.prepare("SELECT secret_hash FROM players WHERE id = ?").bind(id).first();
-    if (!row) return json({ ok: true, removed: 0 });   // nothing of this player on the server
-    // same proof as an upload: the player's own secret (or, once, the one version 1.0.0 derived)
-    const upgrade = request.headers.get("x-player-upgrade") || "";
-    const proven = row.secret_hash === (await sha256(secret)) || (upgrade.length >= 16 && row.secret_hash === (await sha256(upgrade)));
-    if (!proven) return json({ error: "player belongs to someone else" }, 403);
-    const del = await env.DB.prepare("SELECT COUNT(*) AS n FROM runs WHERE player_id = ?").bind(id).first();
-    await env.DB.batch([env.DB.prepare("DELETE FROM runs WHERE player_id = ?").bind(id), env.DB.prepare("DELETE FROM players WHERE id = ?").bind(id)]);
-    return json({ ok: true, removed: del.n });
-  }
+  // ---- group admin (the person who owns the ADMIN_CODE secret): see every player and remove scans. Nobody else can delete anything.
+  if (url.pathname.startsWith("/v1/admin/")) {
+    const adminCode = request.headers.get("x-admin") || "";
+    if (!env.ADMIN_CODE || !adminCode || !(await sameSecret(adminCode, String(env.ADMIN_CODE).trim()))) return json({ error: "not admin" }, 403);
 
+    if (url.pathname === "/v1/admin/players" && request.method === "GET") {
+      const players = (await env.DB.prepare("SELECT id, name, created_at FROM players ORDER BY created_at").all()).results;
+      const perGame = (await env.DB.prepare("SELECT player_id, game, COUNT(*) AS n, MAX(time) AS last FROM runs GROUP BY player_id, game").all()).results;
+      return json({
+        players: players.map((p) => {
+          const games = perGame.filter((g) => g.player_id === p.id).map((g) => ({ game: g.game, count: g.n, last: g.last }));
+          return { id: p.id, name: p.name, created: p.created_at, total: games.reduce((a, g) => a + g.count, 0), games };
+        }),
+      });
+    }
+
+    if (url.pathname === "/v1/admin/delete" && request.method === "POST") {
+      let body;
+      try { body = JSON.parse(await request.text()); } catch { return json({ error: "bad json" }, 400); }
+      const id = String(body?.player || "");
+      if (!PLAYER_RX.test(id)) return json({ error: "bad player" }, 400);
+      const game = typeof body?.game === "string" ? body.game : "";
+      const before = await env.DB.prepare("SELECT COUNT(*) AS n FROM runs WHERE player_id = ?" + (game ? " AND game = ?" : "")).bind(...(game ? [id, game] : [id])).first();
+      // one game: only its scans go; everything: the scans and the player record (a returning player registers again by uploading)
+      const stmts = game
+        ? [env.DB.prepare("DELETE FROM runs WHERE player_id = ? AND game = ?").bind(id, game)]
+        : [env.DB.prepare("DELETE FROM runs WHERE player_id = ?").bind(id), env.DB.prepare("DELETE FROM players WHERE id = ?").bind(id)];
+      await env.DB.batch(stmts);
+      return json({ ok: true, removed: before.n });
+    }
+    return json({ error: "not found" }, 404);
+  }
   return json({ error: "not found" }, 404);
 }
