@@ -81,6 +81,21 @@ export interface Settings {
   taskInstalled: boolean;
 }
 
+/** automatic sharing with the group server */
+export interface SyncState {
+  /** the app knows a server address (otherwise the sharing UI stays hidden) */
+  configured: boolean;
+  hasCode: boolean;
+  enabled: boolean;
+  /** "", "code" (wrong group code), "player", "net" (no connection), "server" */
+  error: string;
+  lastOkSecondsAgo: number;
+  /** players known to the server (everyone who ever uploaded) */
+  players: number;
+  uploaded: number;
+  busy: boolean;
+}
+
 export interface GuardState {
   running: boolean;
   /** version of the running guard (can lag behind the app after an update when it was installed for start-up) */
@@ -171,6 +186,9 @@ export const api = {
   guard: () => call<GuardState>("/api/guard"),
   guardStart: () => call<{ ok: boolean; error?: string }>("/api/guard/start", {}),
   guardStop: () => call<{ ok: boolean }>("/api/guard/stop", {}),
+  syncState: () => call<SyncState>("/api/sync/state"),
+  syncConfig: (patch: { code?: string; enabled?: boolean }) => call<SyncState & { ok?: boolean; error?: string }>("/api/sync/config", patch),
+  syncNow: () => call<{ ok: boolean }>("/api/sync/now", {}),
   guardUpdate: () => call<{ ok: boolean; error?: string; detail?: string }>("/api/guard/update", {}),
   settings: () => call<Settings>("/api/settings"),
   settingsSet: (patch: Partial<Pick<Settings, "guardAuto" | "background" | "startup">>) =>
