@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.3.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "0.3.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -101,6 +101,7 @@ namespace GameNetKit
         DateTime lastBeat = DateTime.Now;
         bool seenBeat;
         Process worker;
+        Process browserProc;
         // last update check
         string latestTag = "", assetUrl = "", notes = "";
         bool hasUpdate;
@@ -143,6 +144,7 @@ namespace GameNetKit
                 thread.Start();
 
                 Process browser = args.ContainsKey("nowindow") ? null : OpenWindow("http://127.0.0.1:" + port + "/?t=" + token);
+                browserProc = browser;
                 DateTime started = DateTime.Now;
 
                 while (true)
@@ -492,7 +494,13 @@ namespace GameNetKit
 
                 string cmd = "/c ping 127.0.0.1 -n 3 >nul & move /y \"" + tmp + "\" \"" + exePath + "\" >nul & start \"\" \"" + exePath + "\"";
                 Process.Start(new ProcessStartInfo("cmd.exe", cmd) { CreateNoWindow = true, UseShellExecute = false });
-                ThreadPool.QueueUserWorkItem(delegate { Thread.Sleep(600); Environment.Exit(0); });
+                // close this window too, so the updated app replaces it instead of leaving a dead one behind
+                ThreadPool.QueueUserWorkItem(delegate
+                {
+                    Thread.Sleep(700);
+                    try { if (browserProc != null && !browserProc.HasExited) browserProc.Kill(); } catch { }
+                    Environment.Exit(0);
+                });
                 return Ok();
             }
             catch (Exception e)
