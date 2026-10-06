@@ -160,10 +160,16 @@ async function route(request, env) {
   if (url.pathname === "/v1/me" && request.method === "DELETE") {
     const id = request.headers.get("x-player") || "";
     const secret = request.headers.get("x-player-secret") || "";
-    const row = PLAYER_RX.test(id) ? await env.DB.prepare("SELECT secret_hash FROM players WHERE id = ?").bind(id).first() : null;
-    if (!row || row.secret_hash !== (await sha256(secret))) return json({ error: "unknown player" }, 403);
+    if (!PLAYER_RX.test(id)) return json({ error: "bad player" }, 400);
+    const row = await env.DB.prepare("SELECT secret_hash FROM players WHERE id = ?").bind(id).first();
+    if (!row) return json({ ok: true, removed: 0 });   // nothing of this player on the server
+    // same proof as an upload: the player's own secret (or, once, the one version 1.0.0 derived)
+    const upgrade = request.headers.get("x-player-upgrade") || "";
+    const proven = row.secret_hash === (await sha256(secret)) || (upgrade.length >= 16 && row.secret_hash === (await sha256(upgrade)));
+    if (!proven) return json({ error: "player belongs to someone else" }, 403);
+    const del = await env.DB.prepare("SELECT COUNT(*) AS n FROM runs WHERE player_id = ?").bind(id).first();
     await env.DB.batch([env.DB.prepare("DELETE FROM runs WHERE player_id = ?").bind(id), env.DB.prepare("DELETE FROM players WHERE id = ?").bind(id)]);
-    return json({ ok: true });
+    return json({ ok: true, removed: del.n });
   }
 
   return json({ error: "not found" }, 404);
