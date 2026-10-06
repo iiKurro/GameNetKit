@@ -1,4 +1,4 @@
-﻿// UiHost part 2: blocked servers (firewall) and per-game run history. C# 5 / .NET Framework 4.
+// UiHost part 2: blocked servers (firewall) and per-game run history. C# 5 / .NET Framework 4.
 //
 // Layout on disk (nothing is ever shared between games):
 //   History\<Game>\<Game>_yyyyMMdd_HHmmss.json   one file per scan
@@ -37,23 +37,46 @@ namespace GameNetKit
         }
 
         // ------------------------------------------------------------------ blocked servers
-        List<Dictionary<string, object>> LoadBlocks()
+        // Throws when the file exists but cannot be read (so a read problem is never mistaken for "no blocks" and written over the real list).
+        List<Dictionary<string, object>> LoadBlocksStrict()
         {
             lock (fileLock)
             {
-                try
+                if (!File.Exists(BlocksPath)) return new List<Dictionary<string, object>>();
+                Exception last = null;
+                for (int i = 0; i < 3; i++)
                 {
-                    if (File.Exists(BlocksPath))
-                        return ((object[])js.DeserializeObject(File.ReadAllText(BlocksPath))).Select(o => (Dictionary<string, object>)o).ToList();
+                    try { return ((object[])js.DeserializeObject(File.ReadAllText(BlocksPath))).Select(o => (Dictionary<string, object>)o).ToList(); }
+                    catch (Exception e) { last = e; Thread.Sleep(60); }
                 }
-                catch { }
-                return new List<Dictionary<string, object>>();
+                throw last;
             }
         }
 
+        List<Dictionary<string, object>> LoadBlocks()
+        {
+            try { return LoadBlocksStrict(); } catch { return new List<Dictionary<string, object>>(); }
+        }
+
+        // written to a temp file first and swapped in, so the guard never reads a half-written list
         void SaveBlocks(List<Dictionary<string, object>> list)
         {
-            lock (fileLock) File.WriteAllText(BlocksPath, js.Serialize(list), new UTF8Encoding(false));
+            lock (fileLock)
+            {
+                string tmp = BlocksPath + ".tmp";
+                File.WriteAllText(tmp, js.Serialize(list), new UTF8Encoding(false));
+                if (File.Exists(BlocksPath)) File.Replace(tmp, BlocksPath, null); else File.Move(tmp, BlocksPath);
+            }
+        }
+
+        // read - change - write as one step, so a block added while a slow firewall check was running is not lost
+        bool UpdateBlocks(Func<List<Dictionary<string, object>>, List<Dictionary<string, object>>> change)
+        {
+            lock (fileLock)
+            {
+                try { SaveBlocks(change(LoadBlocksStrict())); return true; }
+                catch (Exception e) { Program.Log("blocks.json update failed: " + e.Message); return false; }
+            }
         }
 
         static bool IsGameMode(Dictionary<string, object> b) { return b.ContainsKey("mode") && Convert.ToString(b["mode"]) == "game"; }
@@ -62,9 +85,9 @@ namespace GameNetKit
         object Blocks()
         {
             var list = LoadBlocks();
-            var keep = list.Where(b => Demo || IsGameMode(b) || Firewall.IsActive((string)b["ip"])).ToList();
-            if (keep.Count != list.Count) SaveBlocks(keep);
-            return keep;
+            var gone = new HashSet<string>(list.Where(b => !(Demo || IsGameMode(b) || Firewall.IsActive((string)b["ip"]))).Select(b => (string)b["ip"]));
+            if (gone.Count > 0) UpdateBlocks(cur => cur.Where(b => !gone.Contains((string)b["ip"])).ToList());
+            return list.Where(b => !gone.Contains((string)b["ip"])).ToList();
         }
 
         // Rebuilds the list from the real firewall rules named "GameNetKit block ...":
@@ -72,19 +95,23 @@ namespace GameNetKit
         object SyncBlocks()
         {
             if (Demo) return LoadBlocks();
-            var known = LoadBlocks();
+            var targets = Firewall.ListTargets();   // slow (PowerShell): done first, then merged into the list as it is by then
             var result = new List<Dictionary<string, object>>();
-            foreach (var kv in Firewall.ListTargets())
+            UpdateBlocks(known =>
             {
-                string target = kv.Key;
-                var e = known.FirstOrDefault(b => (string)b["ip"] == target);
-                if (e == null) e = new Dictionary<string, object> { { "ip", target }, { "label", "" }, { "game", "" }, { "time", "" } };
-                e["method"] = kv.Value;
-                result.Add(e);
-            }
-            foreach (var b in known)
-                if (IsGameMode(b) && !result.Any(r => (string)r["ip"] == (string)b["ip"])) result.Add(b);
-            SaveBlocks(result);
+                result = new List<Dictionary<string, object>>();
+                foreach (var kv in targets)
+                {
+                    string target = kv.Key;
+                    var e = known.FirstOrDefault(b => (string)b["ip"] == target);
+                    if (e == null) e = new Dictionary<string, object> { { "ip", target }, { "label", "" }, { "game", "" }, { "time", "" } };
+                    e["method"] = kv.Value;
+                    result.Add(e);
+                }
+                foreach (var b in known)
+                    if (IsGameMode(b) && !result.Any(r => (string)r["ip"] == (string)b["ip"])) result.Add(b);
+                return result;
+            });
             return result;
         }
 
@@ -109,19 +136,20 @@ namespace GameNetKit
         {
             string ip = Convert.ToString(body["ip"]);
             if (!Firewall.ValidIp(ip)) return Fail("bad ip");
+            string protectedWhy = Firewall.Protected(ip);
+            if (protectedWhy != "") return new Dictionary<string, object> { { "ok", false }, { "error", "protected" }, { "detail", protectedWhy } };
             string game = body.ContainsKey("game") ? Convert.ToString(body["game"]) : "";
             bool whilePlaying = body.ContainsKey("mode") && Convert.ToString(body["mode"]) == "game" && game != "";
             if (whilePlaying)
             {
                 // the block only lives while that game runs: the guard (one admin prompt, then silent) switches it on and off
                 if (!GuardRunning()) { string why = StartGuard(true); if (why != "") return Fail(why); }
-                var gl = LoadBlocks().Where(b => (string)b["ip"] != ip).ToList();
-                gl.Add(new Dictionary<string, object>
+                var entry0 = new Dictionary<string, object>
                 {
                     { "ip", ip }, { "label", body.ContainsKey("label") ? Convert.ToString(body["label"]) : "" }, { "game", game },
                     { "time", DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) }, { "method", "" }, { "mode", "game" }
-                });
-                SaveBlocks(gl);
+                };
+                if (!UpdateBlocks(cur => { var gl = cur.Where(b => (string)b["ip"] != ip).ToList(); gl.Add(entry0); return gl; })) return Fail("busy");
                 return Ok();
             }
             if (!Demo)
@@ -132,16 +160,15 @@ namespace GameNetKit
                 if (!Firewall.IsActive(ip)) return FwFail("firewall", "rule was added but could not be found afterwards");
             }
             string method = Demo ? "firewall" : Firewall.MethodOf(ip);
-            var list = LoadBlocks().Where(b => (string)b["ip"] != ip).ToList();
-            list.Add(new Dictionary<string, object>
+            var entry1 = new Dictionary<string, object>
             {
                 { "ip", ip },
                 { "label", body.ContainsKey("label") ? Convert.ToString(body["label"]) : "" },
                 { "game", body.ContainsKey("game") ? Convert.ToString(body["game"]) : "" },
                 { "time", DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) },
                 { "method", method }, { "mode", "always" }
-            });
-            SaveBlocks(list);
+            };
+            if (!UpdateBlocks(cur => { var list = cur.Where(b => (string)b["ip"] != ip).ToList(); list.Add(entry1); return list; })) return Fail("busy");
             return Ok();
         }
 
@@ -153,7 +180,7 @@ namespace GameNetKit
             if (entry != null && IsGameMode(entry))
             {
                 // the guard removes an applied block by itself within 2 s; with no guard running only a leftover needs an admin prompt
-                SaveBlocks(LoadBlocks().Where(b => (string)b["ip"] != ip).ToList());
+                UpdateBlocks(cur => cur.Where(b => (string)b["ip"] != ip).ToList());
                 if (!Demo && !GuardRunning() && Firewall.IsActive(ip))
                 {
                     int rc0 = RunElevated("--fw unblock --ip " + ip);
@@ -167,7 +194,7 @@ namespace GameNetKit
                 if (rc == -1) return Fail("uac");
                 if (rc != 0) return FwFail("firewall", FwWhy(rc));
             }
-            SaveBlocks(LoadBlocks().Where(b => (string)b["ip"] != ip).ToList());
+            UpdateBlocks(cur => cur.Where(b => (string)b["ip"] != ip).ToList());
             return Ok();
         }
 
@@ -368,40 +395,6 @@ namespace GameNetKit
             if (Directory.Exists(rd))
                 foreach (string f in Directory.GetFiles(rd, "*.csv")) { try { File.Delete(f); } catch { } }
             return Ok();
-        }
-
-        object ExportPlayer()
-        {
-            var me = ReadProfile();
-            return me == null ? null : new Dictionary<string, object> { { "name", me["name"] }, { "id", me["id"] } };
-        }
-
-        // Writes every saved run of ONE game into one JSON file (server IPs and ping numbers only) and shows it in Explorer.
-        object HistoryExport(Dictionary<string, object> body)
-        {
-            string slug = SlugOf(body);
-            string game = body.ContainsKey("game") ? Convert.ToString(body["game"]) : slug;
-            Migrate();
-            var runs = new List<object>();
-            string hd = HistoryDirFor(slug);
-            if (Directory.Exists(hd))
-                foreach (string f in Directory.GetFiles(hd, "*.json").OrderBy(x => x))
-                {
-                    var run = LoadRun(f);
-                    if (run != null) runs.Add(run);
-                }
-            string dir = Path.Combine(Program.DataDir, "Exports");
-            Directory.CreateDirectory(dir);
-            string path = Path.Combine(dir, "GameNetKit_" + slug + "_history_" + DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture) + ".json");
-            var doc = new Dictionary<string, object>
-            {
-                { "app", "GameNetKit" }, { "version", Program.Version }, { "game", game },
-                { "player", ExportPlayer() },
-                { "exported", DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) }, { "runs", runs }
-            };
-            File.WriteAllText(path, js.Serialize(doc), new UTF8Encoding(false));
-            if (!Demo) { try { Process.Start("explorer.exe", "/select,\"" + path + "\""); } catch { } }
-            return new Dictionary<string, object> { { "ok", true }, { "path", path }, { "count", runs.Count } };
         }
 
         void OpenFolder(Dictionary<string, object> body)
