@@ -71,8 +71,20 @@ export interface Person {
   total: number;
 }
 
+export interface Settings {
+  /** the guard starts by itself when the app opens (follows what you last chose) */
+  guardAuto: boolean;
+  /** closing the window keeps the guard running */
+  background: boolean;
+  /** a sign-in task starts the guard silently, no admin prompt */
+  startup: boolean;
+  taskInstalled: boolean;
+}
+
 export interface GuardState {
   running: boolean;
+  /** version of the running guard (can lag behind the app after an update when it was installed for start-up) */
+  version?: string;
   /** games running right now */
   games: string[];
   /** targets the guard has switched on right now */
@@ -117,7 +129,7 @@ export interface UpdateInfo {
 /** calls that legitimately take longer (an admin prompt, a download, PowerShell) get a longer limit; everything else 20 s */
 const SLOW: Record<string, number> = {
   "/api/block": 120000, "/api/unblock": 120000, "/api/unblockall": 120000,
-  "/api/guard/start": 60000, "/api/guard/stop": 30000,
+  "/api/guard/start": 60000, "/api/guard/stop": 30000, "/api/guard/update": 180000, "/api/settings/set": 180000,
   "/api/update/check": 30000, "/api/update/apply": 180000,
   "/api/blocks": 60000, "/api/blocks/sync": 90000,
   "/api/people/import": 90000, "/api/history/export": 60000, "/api/history/exportall": 60000,
@@ -159,6 +171,10 @@ export const api = {
   guard: () => call<GuardState>("/api/guard"),
   guardStart: () => call<{ ok: boolean; error?: string }>("/api/guard/start", {}),
   guardStop: () => call<{ ok: boolean }>("/api/guard/stop", {}),
+  guardUpdate: () => call<{ ok: boolean; error?: string; detail?: string }>("/api/guard/update", {}),
+  settings: () => call<Settings>("/api/settings"),
+  settingsSet: (patch: Partial<Pick<Settings, "guardAuto" | "background" | "startup">>) =>
+    call<Settings & { ok?: boolean; error?: string; detail?: string }>("/api/settings/set", patch),
   unblock: (ip: string) => call<{ ok: boolean; error?: string; detail?: string }>("/api/unblock", { ip }),
   // history is always per game: scans of different games are never mixed
   // person = slug of an imported friend ("" = my own scans)
