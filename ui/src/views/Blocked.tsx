@@ -4,6 +4,7 @@ import type { BlockEntry } from "@/api";
 import type { Key } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Status } from "@/components/ui/status";
+import { RowSkeleton } from "@/components/ui/skeleton";
 
 type T = (k: Key) => string;
 
@@ -23,9 +24,10 @@ export function BlockedView({ t, blocks, onUnblock, onUnblockAll, onAdd, onSync 
   const [busy, setBusy] = useState("");
   const [text, setText] = useState("");
   const [invalid, setInvalid] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   // the list always reflects the real firewall rules when this tab opens
-  useEffect(() => { void onSync(); }, [onSync]);
+  useEffect(() => { void onSync().finally(() => setLoaded(true)); }, [onSync]);
 
   const work = async (key: string, fn: () => Promise<void>) => {
     setBusy(key);
@@ -81,7 +83,9 @@ export function BlockedView({ t, blocks, onUnblock, onUnblockAll, onAdd, onSync 
         {invalid && <p className="mt-2 text-xs text-destructive">{t("manualInvalid")}</p>}
       </div>
 
-      {blocks.length === 0 ? (
+      {!loaded && blocks.length === 0 ? (
+        <div className="overflow-hidden rounded-xl border border-border bg-card" aria-busy="true"><RowSkeleton /><div className="border-t border-border" /><RowSkeleton /></div>
+      ) : blocks.length === 0 ? (
         <div className="enter flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border p-12 text-center">
           <div className="flex size-12 items-center justify-center rounded-full bg-accent text-muted-foreground"><Ban className="size-6" /></div>
           <div>
@@ -101,6 +105,7 @@ export function BlockedView({ t, blocks, onUnblock, onUnblockAll, onAdd, onSync 
                       <span className="num text-sm font-medium">{b.ip}</span>
                       {b.method === "route" && <Status variant="info" title={t("viaRouteHint")}>{t("viaRoute")}</Status>}
                     </div>
+                    {b.method === "route" && <p className="mt-1 max-w-xl text-[11px] leading-relaxed text-muted-foreground">{t("viaRouteHint")}</p>}
                     <div className="text-xs break-words text-muted-foreground">
                       {b.label}{b.label && b.time ? " · " : ""}{b.time && <>{t("since")} <span className="num">{b.time}</span></>}
                     </div>
