@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.4.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "0.4.2";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
