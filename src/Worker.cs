@@ -1,4 +1,4 @@
-﻿// Elevated worker: waits for the game, captures UDP headers with pktmon, measures servers, writes state.json.
+// Elevated worker: waits for the game, captures UDP headers with pktmon, measures servers, writes state.json.
 // Runs as a separate (admin) process so the UI itself never needs elevation.
 using System;
 using System.Collections.Generic;
@@ -51,6 +51,7 @@ namespace GameNetKit
         public static int Run(Dictionary<string, string> a)
         {
             dir = a["dir"];
+            Analyzer.CacheDir = dir;
             game = a.ContainsKey("game") ? a["game"] : "";
             string proc = a.ContainsKey("process") ? a["process"] : "";   // one or more names, separated by |
             totalSeconds = a.ContainsKey("seconds") ? int.Parse(a["seconds"]) : 240;
@@ -219,6 +220,14 @@ namespace GameNetKit
             var tasks = list.Select(s => Task.Factory.StartNew(() =>
             {
                 var ps = Analyzer.MeasurePing(s.Ip, pings);
+                string via = "";
+                if (ps.Avg == null)
+                {
+                    // the server does not answer ping: measure through its cloud region instead (see Analyzer.MeasureRegion)
+                    var rg = Analyzer.RegionOf(s.Ip);
+                    var rp = rg == null ? null : Analyzer.MeasureRegion(rg, pings);
+                    if (rp != null && rp.Avg != null) { ps = rp; via = rg.Provider + ":" + rg.Region; }
+                }
                 Dictionary<string, object> g;
                 geo.TryGetValue(s.Ip, out g);
                 var row = new Dictionary<string, object>
@@ -230,7 +239,7 @@ namespace GameNetKit
                     { "provider", g != null ? (string)g["isp"] : "?" },
                     { "host", Analyzer.Ptr(s.Ip) },
                     { "avg", ps.Avg }, { "max", ps.Max }, { "jitter", ps.Jitter }, { "loss", ps.Loss },
-                    { "verdict", Analyzer.Verdict(ps) }
+                    { "verdict", Analyzer.Verdict(ps) }, { "via", via }
                 };
                 lock (rows) rows[s.Ip] = row;
             })).ToArray();
