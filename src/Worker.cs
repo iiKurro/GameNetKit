@@ -87,8 +87,7 @@ namespace GameNetKit
             while (Process.GetProcessesByName(proc).Length == 0) { CheckCancel(); Thread.Sleep(1000); }
 
             Put("ready");
-            string goFlag = Path.Combine(dir, "go.flag");
-            while (!File.Exists(goFlag)) { CheckCancel(); Thread.Sleep(500); }
+            WaitForMatch(proc);   // starts by itself when match traffic appears, or when the user presses the button
 
             string etl = Path.Combine(Path.GetTempPath(), "gamenetkit_cap.etl");
             string txt = Path.Combine(Path.GetTempPath(), "gamenetkit_cap.txt");
@@ -146,6 +145,53 @@ namespace GameNetKit
             Measure(servers.Take(top).ToList(), pings);
         }
 
+        // A match = one public address receiving a steady stream of UDP (>= 200 packets in 4 s, twice in a row).
+        // Menus and launcher traffic stay far below that. The manual button (go.flag) always works too.
+        static void WaitForMatch(string proc)
+        {
+            string goFlag = Path.Combine(dir, "go.flag");
+            string etl = Path.Combine(Path.GetTempPath(), "gamenetkit_probe.etl");
+            string txt = Path.Combine(Path.GetTempPath(), "gamenetkit_probe.txt");
+            string o;
+            var ports = new HashSet<int>();
+            Pktmon("stop", out o);
+            Pktmon("filter remove", out o);
+            if (Pktmon("filter add GameUDP -t UDP", out o) != 0) { WaitManual(goFlag); return; }
+            int hits = 0;
+            try
+            {
+                while (true)
+                {
+                    CheckCancel();
+                    if (File.Exists(goFlag)) return;
+                    var pids = new HashSet<int>(Process.GetProcessesByName(proc).Select(p => p.Id));
+                    Analyzer.CollectUdpPorts(pids, ports);
+                    try { File.Delete(etl); File.Delete(txt); } catch { }
+                    if (Pktmon("start --capture --comp nics --pkt-size 64 --file-name \"" + etl + "\" --file-size 50", out o) != 0) { WaitManual(goFlag); return; }
+                    for (int i = 0; i < 8 && !File.Exists(goFlag) && !CancelRequested(); i++) Thread.Sleep(500);
+                    Pktmon("stop", out o);
+                    if (File.Exists(goFlag)) return;
+                    if (ports.Count > 0 && Pktmon("etl2txt \"" + etl + "\" --out \"" + txt + "\"", out o) == 0 && File.Exists(txt))
+                    {
+                        long parsed;
+                        var srv = Analyzer.ParseCapture(File.ReadLines(txt), ports, out parsed);
+                        hits = srv.Count > 0 && srv[0].Packets >= 200 ? hits + 1 : 0;
+                    }
+                    if (hits >= 2) return;
+                }
+            }
+            finally
+            {
+                Pktmon("stop", out o);
+                Pktmon("filter remove", out o);
+            }
+        }
+
+        static void WaitManual(string goFlag)
+        {
+            while (!File.Exists(goFlag)) { CheckCancel(); Thread.Sleep(500); }
+        }
+
         static void Measure(List<Srv> list, int pings)
         {
             var geo = Analyzer.Geo(list.Select(s => s.Ip));
@@ -159,6 +205,7 @@ namespace GameNetKit
                 {
                     { "ip", s.Ip }, { "port", s.Port }, { "packets", s.Packets }, { "kb", (long)Math.Round(s.Bytes / 1024.0) },
                     { "country", g != null ? (string)g["country"] : "?" },
+                    { "cc", g != null && g.ContainsKey("countryCode") ? (string)g["countryCode"] : "" },
                     { "city", g != null ? (string)g["city"] : "?" },
                     { "provider", g != null ? (string)g["isp"] : "?" },
                     { "host", Analyzer.Ptr(s.Ip) },
@@ -212,7 +259,7 @@ namespace GameNetKit
             for (int i = 0; i < 3; i++) { CheckCancel(); Thread.Sleep(1000); }
             Put("ready");
             string goFlag = Path.Combine(dir, "go.flag");
-            while (!File.Exists(goFlag)) { CheckCancel(); Thread.Sleep(300); }
+            for (int w = 0; w < 16 && !File.Exists(goFlag); w++) { CheckCancel(); Thread.Sleep(300); }   // demo: "match detected" by itself after ~5 s
             for (int s = totalSeconds; s > 0; s--)
             {
                 CheckCancel();
@@ -225,20 +272,20 @@ namespace GameNetKit
             Put("measuring"); Thread.Sleep(1200);
             results = new List<Dictionary<string, object>>
             {
-                Demo("203.0.113.10", 7777, "Bahrain", "Manama", "Amazon", 8421, 612, 31, 3, 0, "good"),
-                Demo("203.0.113.55", 7778, "Germany", "Frankfurt", "Amazon", 1204, 98, 142, 33, 4, "bad"),
-                Demo("198.51.100.7", 7777, "India", "Mumbai", "Amazon", 640, 52, 87, 12, 0, "ok"),
-                Demo("198.51.100.90", 443, "United States", "Ashburn", "Epic Games", 120, 9, null, null, 100, "noreply")
+                Demo("203.0.113.10", 7777, "Bahrain", "BH", "Manama", "Amazon", 8421, 612, 31, 3, 0, "good"),
+                Demo("203.0.113.55", 7778, "Germany", "DE", "Frankfurt", "Amazon", 1204, 98, 142, 33, 4, "bad"),
+                Demo("198.51.100.7", 7777, "India", "IN", "Mumbai", "Amazon", 640, 52, 87, 12, 0, "ok"),
+                Demo("198.51.100.90", 443, "United States", "US", "Ashburn", "Epic Games", 120, 9, null, null, 100, "noreply")
             };
             WriteCsv();
             Put("done");
         }
 
-        static Dictionary<string, object> Demo(string ip, int port, string country, string city, string isp, long pk, long kb, int? avg, double? jit, int loss, string verdict)
+        static Dictionary<string, object> Demo(string ip, int port, string country, string cc, string city, string isp, long pk, long kb, int? avg, double? jit, int loss, string verdict)
         {
             return new Dictionary<string, object>
             {
-                { "ip", ip }, { "port", port }, { "country", country }, { "city", city }, { "provider", isp }, { "host", "" },
+                { "ip", ip }, { "port", port }, { "country", country }, { "cc", cc }, { "city", city }, { "provider", isp }, { "host", "" },
                 { "packets", pk }, { "kb", kb }, { "avg", avg }, { "max", avg == null ? (int?)null : avg + 9 }, { "jitter", jit }, { "loss", loss }, { "verdict", verdict }
             };
         }
