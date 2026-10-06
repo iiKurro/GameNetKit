@@ -1,4 +1,4 @@
-﻿// Packet-capture parsing, ping measurement, geo lookup. Pure logic, no UI. (C# 5 / .NET Framework 4)
+// Packet-capture parsing, ping measurement, geo lookup. Pure logic, no UI. (C# 5 / .NET Framework 4)
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -120,6 +120,186 @@ namespace GameNetKit
             return res;
         }
 
+        // ------------------------------------------------------------------ servers that do not answer ping
+        // Many game servers (most Google Cloud and AWS ones) drop ICMP, so a plain ping says nothing. For those the latency is measured
+        // to a public point that lives in the SAME cloud region (which the provider's published address lists tell us):
+        //   AWS         TCP connect time to that region's DynamoDB endpoint
+        //   Google      time of a keep-alive HTTPS request to that region's gcping.com endpoint (the standard Google Cloud latency test)
+        // It is a real measurement, not a guess from distance, but it is to the region's front door, not to the game server itself,
+        // so the result is marked (via = "gcp:europe-west1") and can differ from the true value by a few tens of milliseconds.
+        public static string CacheDir = "";
+
+        public class RegionInfo { public string Provider; public string Region; }
+
+        class Prefix { public uint Net; public int Len; public string Region; }
+        static List<Prefix> gcpPrefixes, awsPrefixes;
+        static Dictionary<string, string> gcpEndpoints;
+        static readonly object cloudLock = new object();
+
+        // a cached copy of a public JSON file; refreshed when older than maxAgeDays, and a stale copy is still used when the download fails
+        static string CloudFile(string name, string url, int maxAgeDays)
+        {
+            string path = "";
+            try
+            {
+                string dir = Path.Combine(CacheDir == "" ? Path.GetTempPath() : CacheDir, "cloud");
+                Directory.CreateDirectory(dir);
+                path = Path.Combine(dir, name);
+                if (!File.Exists(path) || (DateTime.Now - File.GetLastWriteTime(path)).TotalDays > maxAgeDays)
+                {
+                    var req = (HttpWebRequest)WebRequest.Create(url);
+                    req.Timeout = 20000; req.UserAgent = "GameNetKit/" + Program.Version;
+                    using (var resp = (HttpWebResponse)req.GetResponse())
+                    using (var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                    {
+                        string text = sr.ReadToEnd();
+                        if (text.Length > 1000) File.WriteAllText(path, text, new UTF8Encoding(false));
+                    }
+                }
+            }
+            catch { }
+            try { return File.Exists(path) ? File.ReadAllText(path) : ""; } catch { return ""; }
+        }
+
+        static uint ToU(string ip) { byte[] b = IPAddress.Parse(ip).GetAddressBytes(); return ((uint)b[0] << 24) | ((uint)b[1] << 16) | ((uint)b[2] << 8) | b[3]; }
+
+        static List<Prefix> ParsePrefixes(string json, string listKey, string prefixKey, string regionKey)
+        {
+            var list = new List<Prefix>();
+            if (json == "") return list;
+            try
+            {
+                var js = new JavaScriptSerializer { MaxJsonLength = int.MaxValue, RecursionLimit = 20 };
+                var root = (Dictionary<string, object>)js.DeserializeObject(json);
+                foreach (object o in (object[])root[listKey])
+                {
+                    var d = (Dictionary<string, object>)o;
+                    if (!d.ContainsKey(prefixKey) || !d.ContainsKey(regionKey)) continue;
+                    string[] p = Convert.ToString(d[prefixKey]).Split('/');
+                    string region = Convert.ToString(d[regionKey]);
+                    if (p.Length != 2 || region == "" || region == "GLOBAL" || region == "global") continue;
+                    IPAddress a;
+                    if (!IPAddress.TryParse(p[0], out a) || a.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) continue;
+                    list.Add(new Prefix { Net = ToU(p[0]), Len = int.Parse(p[1]), Region = region });
+                }
+            }
+            catch { }
+            return list;
+        }
+
+        static string Lookup(List<Prefix> list, uint ip)
+        {
+            string best = null; int bestLen = -1;
+            foreach (var p in list)
+            {
+                uint mask = p.Len == 0 ? 0 : 0xFFFFFFFFu << (32 - p.Len);
+                if ((ip & mask) == (p.Net & mask) && p.Len > bestLen) { best = p.Region; bestLen = p.Len; }
+            }
+            return best;
+        }
+
+        // which cloud region an IPv4 address belongs to (null = not a Google Cloud / AWS address, or the lists are unavailable)
+        public static RegionInfo RegionOf(string ip)
+        {
+            IPAddress a;
+            if (!IPAddress.TryParse(ip, out a) || a.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return null;
+            uint u = ToU(ip);
+            lock (cloudLock)
+            {
+                if (gcpPrefixes == null) gcpPrefixes = ParsePrefixes(CloudFile("gcp-ranges.json", "https://www.gstatic.com/ipranges/cloud.json", 7), "prefixes", "ipv4Prefix", "scope");
+                string r = Lookup(gcpPrefixes, u);
+                if (r != null) return new RegionInfo { Provider = "gcp", Region = r };
+                if (awsPrefixes == null) awsPrefixes = ParsePrefixes(CloudFile("aws-ranges.json", "https://ip-ranges.amazonaws.com/ip-ranges.json", 7), "prefixes", "ip_prefix", "region");
+                r = Lookup(awsPrefixes, u);
+                if (r != null) return new RegionInfo { Provider = "aws", Region = r };
+            }
+            return null;
+        }
+
+        static string GcpUrl(string region)
+        {
+            lock (cloudLock)
+            {
+                if (gcpEndpoints == null)
+                {
+                    gcpEndpoints = new Dictionary<string, string>();
+                    try
+                    {
+                        string json = CloudFile("gcping.json", "https://global.gcping.com/api/endpoints", 30);
+                        var root = (Dictionary<string, object>)new JavaScriptSerializer().DeserializeObject(json);
+                        foreach (var kv in root)
+                        {
+                            var d = kv.Value as Dictionary<string, object>;
+                            if (d != null && d.ContainsKey("URL")) gcpEndpoints[kv.Key] = Convert.ToString(d["URL"]);
+                        }
+                    }
+                    catch { }
+                }
+                string u;
+                return gcpEndpoints.TryGetValue(region, out u) && u.StartsWith("https://") ? u : null;
+            }
+        }
+
+        static PingStat StatsOf(List<int> times, int tried)
+        {
+            if (times.Count == 0) return null;
+            var res = new PingStat { Avg = (int)Math.Round(times.Average()), Max = times.Max() };
+            double jit = 0;
+            for (int i = 1; i < times.Count; i++) jit += Math.Abs(times[i] - times[i - 1]);
+            res.Jitter = Math.Round(times.Count > 1 ? jit / (times.Count - 1) : 0, 1);
+            res.Loss = (int)Math.Round(100.0 * (tried - times.Count) / tried);
+            return res;
+        }
+
+        // null = could not be measured either
+        public static PingStat MeasureRegion(RegionInfo r, int count)
+        {
+            if (r == null) return null;
+            count = Math.Max(5, Math.Min(count, 12));
+            var times = new List<int>();
+            try
+            {
+                if (r.Provider == "aws")
+                {
+                    IPAddress ip = Dns.GetHostAddresses("dynamodb." + r.Region + ".amazonaws.com").FirstOrDefault(x => x.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
+                    if (ip == null) return null;
+                    for (int i = 0; i < count; i++)
+                    {
+                        using (var c = new System.Net.Sockets.TcpClient())
+                        {
+                            var sw = System.Diagnostics.Stopwatch.StartNew();
+                            var ar = c.BeginConnect(ip, 443, null, null);
+                            if (ar.AsyncWaitHandle.WaitOne(1500) && c.Connected) { sw.Stop(); times.Add((int)Math.Max(1, sw.ElapsedMilliseconds)); }
+                        }
+                        Thread.Sleep(150);
+                    }
+                    return StatsOf(times, count);
+                }
+                if (r.Provider == "gcp")
+                {
+                    string url = GcpUrl(r.Region);
+                    if (url == null) return null;
+                    for (int i = 0; i <= count; i++)   // the first request opens the connection (DNS, TLS) and is not counted
+                    {
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        try
+                        {
+                            var req = (HttpWebRequest)WebRequest.Create(url);
+                            req.KeepAlive = true; req.Timeout = 4000; req.AllowAutoRedirect = false; req.UserAgent = "GameNetKit/" + Program.Version;
+                            using (var resp = (HttpWebResponse)req.GetResponse())
+                            using (var s = resp.GetResponseStream()) { var buf = new byte[512]; while (s.Read(buf, 0, buf.Length) > 0) { } }
+                            sw.Stop();
+                            if (i > 0) times.Add((int)Math.Max(1, sw.ElapsedMilliseconds));
+                        }
+                        catch { }
+                        Thread.Sleep(150);
+                    }
+                    return StatsOf(times, count);
+                }
+            }
+            catch { }
+            return null;
+        }
         public static string Verdict(PingStat s)
         {
             if (s.Avg == null) return "noreply";
