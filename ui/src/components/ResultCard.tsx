@@ -3,6 +3,8 @@ import { Ban, LoaderCircle, ShieldOff } from "lucide-react";
 import type { ServerResult } from "@/api";
 import type { Key } from "@/i18n";
 import { rangeOf } from "@/lib/cidr";
+import { Flag } from "@/lib/flags";
+import { isV6 } from "@/lib/stats";
 import { Button } from "@/components/ui/button";
 import { Status } from "@/components/ui/status";
 import {
@@ -54,7 +56,11 @@ export function ResultCard({ s, t, first, delay = 0, blocked, onBlock, onUnblock
   return (
     <ServerCard highlight={first} className="enter" style={{ animationDelay: `${delay}ms` }}>
       <ServerCardHeader>
-        <ServerCardTitle region={locationOf(s)}>{s.ip}</ServerCardTitle>
+        <ServerCardTitle
+          region={<span className="inline-flex items-center gap-1.5"><Flag country={s.country} cc={s.cc} />{locationOf(s)}</span>}
+        >
+          {s.ip}
+        </ServerCardTitle>
         <ServerCardStatus status={s.verdict}>{verdictLabel(s.verdict, t)}</ServerCardStatus>
       </ServerCardHeader>
 
@@ -82,7 +88,9 @@ export function ResultCard({ s, t, first, delay = 0, blocked, onBlock, onUnblock
       )}
 
       <div className="mt-auto flex flex-col gap-2 border-t border-border pt-3">
-        {blocked ? (
+        {isV6(s.ip) && !blocked ? (
+          <p className="text-[11px] text-muted-foreground">{t("v6Note")}</p>
+        ) : blocked ? (
           <Button variant="secondary" size="sm" disabled={busy} onClick={() => run(() => onUnblock())}>
             {busy ? <LoaderCircle className="animate-spin" /> : <ShieldOff />}
             {busy ? t("blocking") : t("unblock")}
