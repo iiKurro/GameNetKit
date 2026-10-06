@@ -146,7 +146,7 @@ const SLOW: Record<string, number> = {
   "/api/block": 120000, "/api/unblock": 120000, "/api/unblockall": 120000,
   "/api/guard/start": 60000, "/api/guard/stop": 30000, "/api/guard/update": 180000, "/api/settings/set": 180000,
   "/api/update/check": 30000, "/api/update/apply": 180000,
-  "/api/blocks": 60000, "/api/blocks/sync": 90000,
+  "/api/blocks": 60000, "/api/blocks/sync": 90000, "/api/sync/deletemine": 60000,
 };
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -188,6 +188,8 @@ export const api = {
   syncState: () => call<SyncState>("/api/sync/state"),
   syncConfig: (patch: { code?: string; enabled?: boolean }) => call<SyncState & { ok?: boolean; error?: string }>("/api/sync/config", patch),
   syncNow: () => call<{ ok: boolean }>("/api/sync/now", {}),
+  /** removes everything I uploaded from the group server (my own history on this PC is not touched) */
+  syncDeleteMine: () => call<{ ok: boolean; removed?: number; error?: string }>("/api/sync/deletemine", {}),
   guardUpdate: () => call<{ ok: boolean; error?: string; detail?: string }>("/api/guard/update", {}),
   settings: () => call<Settings>("/api/settings"),
   settingsSet: (patch: Partial<Pick<Settings, "guardAuto" | "background" | "startup">>) =>
