@@ -334,7 +334,7 @@ namespace GameNetKit
                 rows.Add(new Dictionary<string, object>
                 {
                     { "id", run["id"] }, { "time", run["time"] }, { "game", run["game"] }, { "count", results.Length },
-                    { "best", results.Length > 0 ? results[0] : null }
+                    { "best", results.Length > 0 ? results[0] : null }, { "net", run.ContainsKey("net") ? run["net"] : null }
                 });
             }
             return rows;
