@@ -51,6 +51,7 @@ namespace GameNetKit
             int top = a.ContainsKey("top") ? int.Parse(a["top"]) : 8;
             int pings = a.ContainsKey("pings") ? int.Parse(a["pings"]) : 10;
             bool demo = a.ContainsKey("demo");
+            demoMode = demo;
             Directory.CreateDirectory(dir);
             try
             {
@@ -172,9 +173,25 @@ namespace GameNetKit
             Put("done");
         }
 
+        static bool demoMode;
+
+        // Saves the finished run as a history entry (id = csv file name) so the UI can list and delete it later.
+        static void SaveHistory()
+        {
+            string histDir = Path.Combine(dir, demoMode ? "History-demo" : "History");
+            Directory.CreateDirectory(histDir);
+            string id = Path.GetFileNameWithoutExtension(csvPath);
+            var run = new Dictionary<string, object>
+            {
+                { "id", id }, { "time", DateTime.Now.ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture) },
+                { "game", game }, { "results", results }
+            };
+            File.WriteAllText(Path.Combine(histDir, id + ".json"), Js.Serialize(run), new UTF8Encoding(false));
+        }
+
         static void WriteCsv()
         {
-            string resDir = Path.Combine(dir, "Results");
+            string resDir = Path.Combine(dir, demoMode ? "Results-demo" : "Results");
             Directory.CreateDirectory(resDir);
             string safe = new string(game.Where(char.IsLetterOrDigit).ToArray());
             csvPath = Path.Combine(resDir, safe + "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".csv");
@@ -184,6 +201,7 @@ namespace GameNetKit
             foreach (var r in results)
                 sb.AppendLine(string.Join(",", cols.Select(c => "\"" + Convert.ToString(r[c] ?? "", System.Globalization.CultureInfo.InvariantCulture).Replace("\"", "\"\"") + "\"")));
             File.WriteAllText(csvPath, sb.ToString(), new UTF8Encoding(true));
+            SaveHistory();
         }
 
         // ------------------------------------------------------------------ demo (UI testing without admin / game)
