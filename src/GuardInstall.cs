@@ -1,4 +1,5 @@
-// "Start with Windows": a scheduled task that runs the guard silently at sign-in and on demand, with administrator rights.
+// "Start with Windows": a scheduled task that runs the guard silently with administrator rights, started at sign-in through an entry in
+// Task Manager > Startup apps (StartupEntry) and on demand by the window.
 //
 //   GameNetKit.exe --install-guard 1 --user DOMAIN\name     (elevated, one UAC prompt)  copy + task + start
 //   GameNetKit.exe --uninstall-guard 1                      (elevated)                  stop + remove task + remove copy
@@ -97,8 +98,9 @@ namespace GameNetKit
                     "$a = New-ScheduledTaskAction -Execute '" + Q(InstalledExe) + "' -Argument '--guard 1'; " +
                     "$p = New-ScheduledTaskPrincipal -UserId '" + Q(user) + "' -LogonType Interactive -RunLevel Highest; " +
                     "$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero); " +
-                    "$t = New-ScheduledTaskTrigger -AtLogOn -User '" + Q(user) + "'; " +
-                    "Register-ScheduledTask -TaskName '" + TaskName + "' -Action $a -Principal $p -Settings $s -Trigger $t -Description 'GameNetKit guard: applies game blocks while a game runs' -Force -ErrorAction Stop | Out-Null";
+                    // no sign-in trigger on purpose: Windows starts it through the "GameNetKit" entry in Startup apps (a plain Run entry that
+                    // only asks this task to run), so Task Manager > Startup apps can switch it off. See StartupEntry.
+                    "Register-ScheduledTask -TaskName '" + TaskName + "' -Action $a -Principal $p -Settings $s -Description 'GameNetKit guard: applies game blocks while a game runs' -Force -ErrorAction Stop | Out-Null";
                 int rc = Ps(script, out o);
                 Log("register rc=" + rc + " " + (o ?? "").Trim().Replace("\r", " ").Replace("\n", " "));
                 if (rc != 0) return rc;
@@ -124,4 +126,51 @@ namespace GameNetKit
             catch (Exception e) { Log("uninstall failed: " + e.Message); return 3; }
         }
     }
-}
+    // The "GameNetKit" line in Task Manager > Startup apps. It is a normal HKCU Run entry whose only job is to ask the (elevated)
+    // scheduled task to run, silently: GameNetKit-Guard.exe --start-guard. Switching it off in Startup apps (or in Settings > Apps >
+    // Startup) is respected: Windows records that in StartupApproved, and the app never turns it back on by itself.
+    public static class StartupEntry
+    {
+        const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        const string ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+        const string ValueName = "GameNetKit";
+
+        static string Command { get { return "\"" + GuardInstall.InstalledExe + "\" --start-guard 1"; } }
+
+        public static bool Exists()
+        {
+            try { using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey)) return k != null && k.GetValue(ValueName) != null; }
+            catch { return false; }
+        }
+
+        // created if missing or pointing somewhere else; never touches the user's "disabled" mark
+        public static void Ensure()
+        {
+            try
+            {
+                using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKey))
+                    if (!string.Equals(Convert.ToString(k.GetValue(ValueName)), Command, StringComparison.OrdinalIgnoreCase)) k.SetValue(ValueName, Command);
+            }
+            catch (Exception e) { Program.Log("startup entry: " + e.Message); }
+        }
+
+        public static void Remove()
+        {
+            try { using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey, true)) if (k != null) k.DeleteValue(ValueName, false); } catch { }
+            try { using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(ApprovedKey, true)) if (k != null) k.DeleteValue(ValueName, false); } catch { }
+        }
+
+        // true when the user switched the entry off in Task Manager (the first byte of the StartupApproved value is odd then)
+        public static bool DisabledByUser()
+        {
+            try
+            {
+                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(ApprovedKey))
+                {
+                    byte[] b = k == null ? null : k.GetValue(ValueName) as byte[];
+                    return b != null && b.Length > 0 && (b[0] & 1) == 1;
+                }
+            }
+            catch { return false; }
+        }
+    }}
