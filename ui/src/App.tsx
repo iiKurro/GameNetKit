@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, Ban, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Play, Radar, RefreshCw, ShieldCheck, Square, Wifi, X } from "lucide-react";
 import { api, type BlockEntry, type Info, type ServerResult, type State, type UpdateInfo } from "@/api";
 import { makeT, type Lang, type Key } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { covers } from "@/lib/cidr";
 import { Button } from "@/components/ui/button";
 import { Status } from "@/components/ui/status";
 import { VerticalStepper } from "@/components/ui/stepper";
@@ -39,7 +40,7 @@ export default function App() {
   const [fwError, setFwError] = useState("");
   const [historyCount, setHistoryCount] = useState(0);
 
-  const blockedIps = useMemo(() => new Set(blocks.map((b) => b.ip)), [blocks]);
+  const isBlocked = useCallback((ip: string) => blocks.some((b) => covers(b.ip, ip)), [blocks]);
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -91,25 +92,32 @@ export default function App() {
 
   const fwMessage = (code?: string) => (code === "uac" ? t("errBlockUac") : t("errBlockFw"));
 
-  const block = useCallback(async (s: ServerResult, gameName: string) => {
+  // target = a single IP or a range such as 34.165.0.0/16
+  const block = useCallback(async (s: ServerResult, gameName: string, target: string) => {
     setFwError("");
-    const r = await api.block(s.ip, locationOf(s), gameName).catch(() => ({ ok: false, error: "x" }));
+    const r = await api.block(target, locationOf(s), gameName).catch(() => ({ ok: false, error: "x" }));
     if (!r.ok) setFwError(fwMessage(r.error));
     await refreshBlocks();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshBlocks, lang]);
 
-  const unblock = useCallback(async (ip: string) => {
+  const unblockTarget = useCallback(async (target: string) => {
     setFwError("");
-    const r = await api.unblock(ip).catch(() => ({ ok: false, error: "x" }));
+    const r = await api.unblock(target).catch(() => ({ ok: false, error: "x" }));
     if (!r.ok) setFwError(fwMessage(r.error));
     await refreshBlocks();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshBlocks, lang]);
+
+  // a card is unblocked by removing whichever rule (IP or range) covers it
+  const unblockFor = useCallback(async (ip: string) => {
+    const e = blocks.find((b) => covers(b.ip, ip));
+    if (e) await unblockTarget(e.ip);
+  }, [blocks, unblockTarget]);
 
   const unblockAll = useCallback(async () => {
-    for (const b of blocks) await unblock(b.ip);
-  }, [blocks, unblock]);
+    for (const b of blocks) await unblockTarget(b.ip);
+  }, [blocks, unblockTarget]);
 
   const p = state.phase;
   const running = p !== "idle" && p !== "done" && p !== "error";
@@ -232,10 +240,10 @@ export default function App() {
       )}
 
       {tab === "history" && (
-        <HistoryView t={t} blockedIps={blockedIps} onBlock={block} onUnblock={unblock} onChanged={setHistoryCount} />
+        <HistoryView t={t} isBlocked={isBlocked} onBlock={block} onUnblock={unblockFor} onChanged={setHistoryCount} />
       )}
 
-      {tab === "blocked" && <BlockedView t={t} blocks={blocks} onUnblock={unblock} onUnblockAll={unblockAll} />}
+      {tab === "blocked" && <BlockedView t={t} blocks={blocks} onUnblock={unblockTarget} onUnblockAll={unblockAll} />}
 
       {tab === "scan" && (
         <main className="grid flex-1 gap-5 lg:grid-cols-[330px_1fr]">
@@ -324,9 +332,9 @@ export default function App() {
                       t={t}
                       first={i === 0}
                       delay={i * 60}
-                      blocked={blockedIps.has(s.ip)}
-                      onBlock={(x) => block(x, state.game)}
-                      onUnblock={unblock}
+                      blocked={isBlocked(s.ip)}
+                      onBlock={(target) => block(s, state.game, target)}
+                      onUnblock={() => unblockFor(s.ip)}
                     />
                   ))}
                 </div>
