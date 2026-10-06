@@ -96,6 +96,9 @@ export interface Settings {
   background: boolean;
   /** a sign-in task starts the guard silently, no admin prompt */
   startup: boolean;
+  /** a Windows notification when a scan starts capturing and when it is done (only while the app is not the active window) */
+  notify: boolean;
+  sound: boolean;
   taskInstalled: boolean;
   /** the Startup apps entry was switched off by the user in Task Manager */
   startupDisabled?: boolean;
@@ -136,6 +139,8 @@ export interface RunSummary {
   game: string;
   count: number;
   best: ServerResult | null;
+  /** the player's provider and country when the scan was made */
+  net?: { isp: string; country: string } | null;
 }
 
 export interface Run {
@@ -143,6 +148,7 @@ export interface Run {
   time: string;
   game: string;
   results: ServerResult[];
+  net?: { isp: string; country: string } | null;
 }
 
 export interface State {
@@ -214,6 +220,9 @@ export const api = {
   /** account = name + password: first run (restores the account when the name and password already exist on the server) */
   accountStart: (name: string, password: string, code: string) => call<{ ok: boolean; restored?: boolean; error?: string }>("/api/account/start", { name, password, code }),
   accountPassword: (password: string) => call<{ ok: boolean; error?: string }>("/api/account/password", { password }),
+  notify: (title: string, text: string) => call<{ ok: boolean }>("/api/notify", { title, text }),
+  trayLabels: (l: { open: string; guardOn: string; guardOff: string; exit: string }) => call<{ ok: boolean }>("/api/tray/labels", l),
+  diagnostics: () => call<{ ok: boolean; text: string }>("/api/diagnostics"),
   syncNow: () => call<{ ok: boolean }>("/api/sync/now", {}),
   /** group admin (hidden, Ctrl+Shift+A): only works with the admin code */
   adminUnlock: (code: string) => call<{ ok: boolean; error?: string }>("/api/admin/unlock", { code }),
@@ -224,7 +233,7 @@ export const api = {
   adminDelete: (player: string, game = "", run = "") => call<{ ok: boolean; removed?: number; error?: string }>("/api/admin/delete", { player, game, run }),
   guardUpdate: () => call<{ ok: boolean; error?: string; detail?: string }>("/api/guard/update", {}),
   settings: () => call<Settings>("/api/settings"),
-  settingsSet: (patch: Partial<Pick<Settings, "guardAuto" | "background" | "startup">>) =>
+  settingsSet: (patch: Partial<Pick<Settings, "guardAuto" | "background" | "startup" | "notify" | "sound">>) =>
     call<Settings & { ok?: boolean; error?: string; detail?: string }>("/api/settings/set", patch),
   unblock: (ip: string) => call<{ ok: boolean; error?: string; detail?: string }>("/api/unblock", { ip }),
   // history is always per game: scans of different games are never mixed
