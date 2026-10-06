@@ -39,6 +39,15 @@ export interface ServerResult {
   jitter: number | null;
   loss: number;
   verdict: "good" | "ok" | "bad" | "noreply";
+  /** set when the server does not answer ping and the numbers were measured through its cloud region: "gcp:europe-west1", "aws:eu-west-1" */
+  via?: string;
+}
+
+export interface AdminPlayer {
+  id: string;
+  name: string;
+  total: number;
+  games: { game: string; count: number; last: string }[];
 }
 
 export interface BlockEntry {
@@ -79,6 +88,8 @@ export interface Settings {
   /** a sign-in task starts the guard silently, no admin prompt */
   startup: boolean;
   taskInstalled: boolean;
+  /** the Startup apps entry was switched off by the user in Task Manager */
+  startupDisabled?: boolean;
 }
 
 /** automatic sharing with the group server */
@@ -94,6 +105,8 @@ export interface SyncState {
   players: number;
   uploaded: number;
   busy: boolean;
+  /** this PC has the group admin code unlocked */
+  admin?: boolean;
 }
 
 export interface GuardState {
@@ -146,7 +159,7 @@ const SLOW: Record<string, number> = {
   "/api/block": 120000, "/api/unblock": 120000, "/api/unblockall": 120000,
   "/api/guard/start": 60000, "/api/guard/stop": 30000, "/api/guard/update": 180000, "/api/settings/set": 180000,
   "/api/update/check": 30000, "/api/update/apply": 180000,
-  "/api/blocks": 60000, "/api/blocks/sync": 90000, "/api/sync/deletemine": 60000,
+  "/api/blocks": 60000, "/api/blocks/sync": 90000, "/api/admin/unlock": 40000, "/api/admin/players": 40000, "/api/admin/delete": 40000,
 };
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -188,8 +201,11 @@ export const api = {
   syncState: () => call<SyncState>("/api/sync/state"),
   syncConfig: (patch: { code?: string; enabled?: boolean }) => call<SyncState & { ok?: boolean; error?: string }>("/api/sync/config", patch),
   syncNow: () => call<{ ok: boolean }>("/api/sync/now", {}),
-  /** removes everything I uploaded from the group server (my own history on this PC is not touched) */
-  syncDeleteMine: () => call<{ ok: boolean; removed?: number; error?: string }>("/api/sync/deletemine", {}),
+  /** group admin (hidden, Ctrl+Shift+A): only works with the admin code */
+  adminUnlock: (code: string) => call<{ ok: boolean; error?: string }>("/api/admin/unlock", { code }),
+  adminLock: () => call<{ ok: boolean }>("/api/admin/lock", {}),
+  adminPlayers: () => call<{ players?: AdminPlayer[]; ok?: boolean; error?: string }>("/api/admin/players"),
+  adminDelete: (player: string, game = "") => call<{ ok: boolean; removed?: number; error?: string }>("/api/admin/delete", { player, game }),
   guardUpdate: () => call<{ ok: boolean; error?: string; detail?: string }>("/api/guard/update", {}),
   settings: () => call<Settings>("/api/settings"),
   settingsSet: (patch: Partial<Pick<Settings, "guardAuto" | "background" | "startup">>) =>
