@@ -256,7 +256,7 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, isRangeBl
                         </>
                       ) : <span className="text-xs text-muted-foreground">—</span>}
                     </div>
-                    <div className="num text-sm sm:text-center">{b?.avg != null ? `${b.avg} ms` : "—"}</div>
+                    <div className="num text-sm sm:text-center">{b?.avg != null ? `${b.via ? "≈ " : ""}${b.avg} ms` : "—"}</div>
                     <div className="sm:justify-self-center">
                       {b && <Status variant={verdictVariant[b.verdict]}>{verdictLabel(b.verdict, t)}</Status>}
                     </div>
