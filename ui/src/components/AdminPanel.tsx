@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle, Lock, RefreshCw, ShieldAlert, Trash2, X } from "lucide-react";
-import { api, type AdminPlayer } from "@/api";
+import { ChevronDown, ChevronUp, KeyRound, LoaderCircle, Lock, RefreshCw, ShieldAlert, Trash2, X } from "lucide-react";
+import { api, type AdminPlayer, type AdminRun } from "@/api";
 import type { Key } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,26 @@ export function AdminPanel({ t, unlocked, onUnlocked, onLocked, onClose }: Props
   const [players, setPlayers] = useState<AdminPlayer[] | null>(null);
   const [confirm, setConfirm] = useState("");   // "<player>|<game or *>"
   const [note, setNote] = useState("");
+  // one player's individual scans, loaded when their list is opened
+  const [openId, setOpenId] = useState("");
+  const [runs, setRuns] = useState<AdminRun[] | null>(null);
+  const resetPassword = async (p: AdminPlayer) => {
+    const key = p.id + "|reset";
+    if (confirm !== key) { setConfirm(key); setNote(""); return; }
+    setConfirm(""); setBusy(true); setProblem("");
+    const r = await api.adminReset(p.id).catch(() => null);
+    setBusy(false);
+    if (!r || !r.ok) { setProblem(t("adminFail")); return; }
+    setNote(`${p.name}: ${t("adminResetDone")}`);
+    await load();
+  };
+  const showRuns = async (p: AdminPlayer) => {
+    if (openId === p.id) { setOpenId(""); setRuns(null); return; }
+    setOpenId(p.id); setRuns(null); setProblem("");
+    const r = await api.adminRuns(p.id).catch(() => null);
+    if (!r || r.error) { setProblem(r?.error === "admin" ? t("adminBadCode") : t("adminFail")); return; }
+    setRuns(r.runs ?? []);
+  };
   const box = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
 
@@ -82,15 +102,16 @@ export function AdminPanel({ t, unlocked, onUnlocked, onLocked, onClose }: Props
     onUnlocked();
   };
 
-  const remove = async (p: AdminPlayer, game: string) => {
-    const key = p.id + "|" + (game || "*");
+  const remove = async (p: AdminPlayer, game: string, run = "") => {
+    const key = p.id + "|" + (run ? "run:" + game + ":" + run : game || "*");
     if (confirm !== key) { setConfirm(key); setNote(""); return; }
     setConfirm(""); setBusy(true); setProblem("");
-    const r = await api.adminDelete(p.id, game).catch(() => null);
+    const r = await api.adminDelete(p.id, game, run).catch(() => null);
     setBusy(false);
     if (!r || !r.ok) { setProblem(r?.error === "admin" ? t("adminBadCode") : t("adminFail")); return; }
     setNote(`${t("adminDeleted")} ${r.removed ?? 0} ${t("adminScans")}`);
     await load();
+    if (run && openId === p.id) { const rr = await api.adminRuns(p.id).catch(() => null); setRuns(rr?.runs ?? null); }
   };
 
   return (
@@ -158,6 +179,39 @@ export function AdminPanel({ t, unlocked, onUnlocked, onLocked, onClose }: Props
                         <Trash2 /> {confirm === p.id + "|*" ? t("adminConfirm") : t("adminDeleteAll")}
                       </Button>
                     </div>
+                    {p.reset && <p className="mt-2 text-xs text-warning">{t("adminResetPending")}</p>}
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      <Button variant={confirm === p.id + "|reset" ? "destructive" : "ghost"} size="sm" onClick={() => void resetPassword(p)} disabled={busy}>
+                        <KeyRound /> {confirm === p.id + "|reset" ? t("adminConfirm") : t("adminReset")}
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => void showRuns(p)} disabled={busy}>
+                        {openId === p.id ? <ChevronUp /> : <ChevronDown />} {openId === p.id ? t("adminHideRuns") : t("adminShowRuns")}
+                      </Button>
+                    </div>
+                    {openId === p.id && (
+                      <div className="mt-2 overflow-hidden rounded-lg border border-border">
+                        {runs === null ? (
+                          <p className="p-3 text-xs text-muted-foreground" aria-busy="true">{t("loading")}</p>
+                        ) : runs.length === 0 ? (
+                          <p className="p-3 text-xs text-muted-foreground">{t("adminEmpty")}</p>
+                        ) : runs.map((r, i) => {
+                          const key = p.id + "|run:" + r.game + ":" + r.id;
+                          return (
+                            <div key={r.game + r.id} className={cn("flex items-center justify-between gap-3 p-2.5 text-xs", i > 0 && "border-t border-border")}>
+                              <div className="min-w-0">
+                                <div className="num font-medium">{r.time || "—"} <span className="ms-1 font-normal text-muted-foreground">{r.game}</span></div>
+                                <div className="num truncate text-muted-foreground">
+                                  {r.best ? `${r.best.ip} · ${[r.best.country, r.best.city].filter((x) => x && x !== "?").join(" · ")} · ${r.best.avg != null ? r.best.avg + " ms" : "—"}` : "—"}
+                                </div>
+                              </div>
+                              <Button variant={confirm === key ? "destructive" : "ghost"} size="sm" disabled={busy} onClick={() => void remove(p, r.game, r.id)} aria-label={t("adminDeleteOne")}>
+                                <Trash2 /> {confirm === key ? t("adminConfirm") : ""}
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                     {p.games.length > 0 && (
                       <ul className="mt-3 flex flex-wrap gap-2">
                         {p.games.map((g) => {
