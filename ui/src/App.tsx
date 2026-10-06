@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Ban, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Lightbulb, Play, Radar, RefreshCw, ShieldCheck, Square, UserRound, X } from "lucide-react";
+import { Activity, Ban, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Lightbulb, Play, Radar, RefreshCw, ShieldCheck, Square, LockKeyhole, UserRound, X } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { ProfileDialog } from "@/components/ProfileDialog";
 import { AdminPanel } from "@/components/AdminPanel";
@@ -54,15 +54,17 @@ export default function App() {
   const [updPhase, setUpdPhase] = useState<"idle" | "checking" | "updating">("idle");
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   const [fwError, setFwError] = useState("");
+  const [notice, setNotice] = useState("");
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [scanRows, setScanRows] = useState<RunSummary[]>([]);
   const [guard, setGuard] = useState<GuardState>({ running: false, games: [], applied: [] });
   const [profile, setProfile] = useState<Profile | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
-  const [dialog, setDialog] = useState<null | "name" | "code">(null);
+  const [dialog, setDialog] = useState<null | "code" | "password">(null);
   // first run: asked for the name (and the group code) once; stays open until everything was accepted
   const [firstRun, setFirstRun] = useState(false);
   const firstRunSeen = useRef(false);
+  const needPasswordRef = useRef(false);
   // the hidden group-admin panel (Ctrl+Shift+A)
   const [adminOpen, setAdminOpen] = useState(false);
   useEffect(() => {
@@ -104,12 +106,34 @@ export default function App() {
     if (r) setSettings(r);
   }, []);
 
-  // name and (optionally) the group code from the dialog. Returns a message when something must be fixed, "" when done.
-  const saveProfile = useCallback(async (name: string, code: string): Promise<string> => {
-    if (name && name !== profile?.name) {
-      const r = await api.profileSet(name).catch(() => null);
-      if (!r || !r.name) return t("errSaveName");
-      setProfile(r);
+  // the dialog: first run (name + group code + password), a new group code, or the account password.
+  // Returns a message when something must be fixed, "" when it is done.
+  const loginError = useCallback((e?: string) =>
+    e === "password" ? t("errPassword") : e === "short" ? t("errPwShort") : e === "tries" ? t("errTries") : e === "code" ? t("syncErrCode")
+    : e === "net" ? t("syncErrNet") : e === "locked" ? t("errLocked") : t("errSaveCode"), [t]);
+
+  const saveProfile = useCallback(async (name: string, code: string, password: string): Promise<string> => {
+    if (firstRun) {
+      const r = await api.accountStart(name, password, code).catch(() => null);
+      if (!r) return t("errSaveName");
+      if (!r.ok) return r.error === "name" ? t("errSaveName") : loginError(r.error);
+      const p = await api.profile().catch(() => null);
+      if (p) setProfile(p);
+      await refreshSync();
+      setDialog(null);
+      setFirstRun(false);
+      if (r.restored) { setNotice(t("restoredNote")); setTimeout(() => setNotice(""), 9000); }
+      return "";
+    }
+    if (dialog === "password" || needPasswordRef.current) {
+      const r = await api.accountPassword(password).catch(() => null);
+      if (!r) return t("errSaveCode");
+      if (!r.ok) return loginError(r.error);
+      const p = await api.profile().catch(() => null);
+      if (p) setProfile(p);
+      await refreshSync();
+      setDialog(null);
+      return "";
     }
     if (code) {
       const s = await api.syncConfig({ code }).catch(() => null);
@@ -127,10 +151,9 @@ export default function App() {
       }
     }
     setDialog(null);
-    setFirstRun(false);
     return "";
-  }, [profile?.name, t]);
-
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firstRun, dialog, t, loginError, refreshSync]);
   const toggleSync = useCallback(async (enabled: boolean) => {
     const s = await api.syncConfig({ enabled }).catch(() => null);
     if (s) setSync(s);
@@ -402,11 +425,15 @@ export default function App() {
   useEffect(() => {
     if (profile && !profile.name && !firstRunSeen.current) { firstRunSeen.current = true; setFirstRun(true); }
   }, [profile]);
-  const modalOpen = firstRun || dialog !== null || adminOpen;
+  // an account that shares with the group but has no password yet must choose one (it is how it is logged into from any PC)
+  const needPassword = !!profile?.name && !!sync?.configured && !!sync.hasCode && !sync.hasPassword && !firstRun;
+  needPasswordRef.current = needPassword;
+  const modalOpen = firstRun || needPassword || dialog !== null || adminOpen;
+  const relogin = !!sync?.hasPassword && (sync.error === "player" || sync.error === "taken");
 
   // what the header chip says when sharing has a problem (the details are in Settings)
   const syncChipText = (s: SyncState) =>
-    s.error === "code" ? t("syncChipCode") : s.error === "player" ? t("syncChipPlayer") : s.error === "full" ? t("syncChipFull")
+    s.error === "code" ? t("syncChipCode") : s.error === "taken" ? t("syncChipTaken") : s.error === "player" ? t("syncChipPlayer") : s.error === "full" ? t("syncChipFull")
     : s.error === "net" ? t("syncChipNet") : s.error ? t("syncChipServer") : t("syncChip");
 
   return (
@@ -425,16 +452,17 @@ export default function App() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {profile && (
-              <Button variant="ghost" size="sm" onClick={() => setDialog("name")} title={t("profileEdit")}>
-                <UserRound /> {profile.name || t("profileTitle")}
-              </Button>
+            {profile?.name && (
+              <span className="inline-flex h-8 items-center gap-1.5 px-2 text-xs font-medium text-muted-foreground" title={t("profileFixed")}>
+                <UserRound className="size-4" /> {profile.name}
+              </span>
             )}
             {sync?.configured && sync.enabled && (
               <Status variant={sync.error ? "warning" : "success"} title={t("syncTitle")}>
                 {syncChipText(sync)} {!sync.error && <span className="num">{sync.players}</span>}
               </Status>
             )}
+            {relogin && <Button variant="outline" size="sm" onClick={() => setDialog("password")}><LockKeyhole /> {t("loginAgain")}</Button>}
             {guard.running && <Status variant="success" pulse title={t("guardText")}>{t("guardTitle")}</Status>}
             {updPhase === "checking" && <Status variant="info" pulse>{t("checking")}</Status>}
             {updPhase === "idle" && upd && !upd.error && !upd.hasUpdate && <Status variant="success">{t("upToDate")}</Status>}
@@ -509,6 +537,13 @@ export default function App() {
             <Button onClick={updateGuard} disabled={!!settingBusy}>
               <ShieldCheck /> {t("guardUpdateBtn")}
             </Button>
+          </div>
+        )}
+
+        {notice && (
+          <div role="status" className="enter flex items-start justify-between gap-3 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm text-success">
+            <span className="min-w-0" dir="auto">{notice}</span>
+            <button className="cursor-pointer opacity-70 hover:opacity-100" onClick={() => setNotice("")} aria-label={t("closeLabel")}><X className="size-4" /></button>
           </div>
         )}
 
@@ -721,13 +756,13 @@ export default function App() {
       )}
 
       {/* first run (no name yet) or "change name": outside the page, which is inert while this is open */}
-      {profile && (firstRun || dialog) && (
+      {profile && (firstRun || needPassword || dialog) && (
         <ProfileDialog
-          key={firstRun ? "first" : dialog ?? "name"}
+          key={firstRun ? "first" : needPassword ? "pw-required" : dialog ?? "code"}
           t={t}
           profile={profile}
-          mode={firstRun ? "both" : dialog ?? "name"}
-          required={firstRun}
+          mode={firstRun ? "both" : needPassword ? "password" : dialog ?? "code"}
+          required={firstRun || needPassword}
           syncConfigured={!!sync?.configured}
           onSave={saveProfile}
           onClose={() => setDialog(null)}
