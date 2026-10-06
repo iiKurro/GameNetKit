@@ -71,7 +71,9 @@ namespace GameNetKit
             string name = CleanName(body.ContainsKey("name") ? Convert.ToString(body["name"]) : "");
             if (name == "") return Fail("name");
             var old = ReadProfile();
-            string id = old != null ? Convert.ToString(old["id"]) : NewId();
+            // the name is chosen once and then fixed: a changed name would create a new folder for this player on every friend's PC
+            if (old != null) return Fail("locked");
+            string id = NewId();
             Directory.CreateDirectory(Program.DataDir);
             File.WriteAllText(ProfilePath, js.Serialize(new Dictionary<string, object> { { "name", name }, { "id", id } }), new UTF8Encoding(false));
             return ProfileGet();
