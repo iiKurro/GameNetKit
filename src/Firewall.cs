@@ -75,33 +75,12 @@ namespace GameNetKit
 
         static int Powershell(string command, out string output)
         {
-            var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"" + command + "\"")
-            {
-                UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true
-            };
-            using (var p = Process.Start(psi))
-            {
-                string o = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-                p.WaitForExit();
-                output = o;
-                return p.ExitCode;
-            }
+            return ProcUtil.Run("powershell.exe", "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"" + command + "\"", 40000, out output);
         }
 
         static int Netsh(string args, out string output)
         {
-            var psi = new ProcessStartInfo("netsh.exe", args)
-            {
-                UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true
-            };
-            using (var p = Process.Start(psi))
-            {
-                output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-                p.WaitForExit();
-                return p.ExitCode;
-            }
+            return ProcUtil.Run("netsh.exe", args, 25000, out output);
         }
 
         // ------------------------------------------------------------------ routes
