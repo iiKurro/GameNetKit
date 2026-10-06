@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Gamepad2, History as HistoryIcon, Trash2, UserRound } from "lucide-react";
 import { api, type Person, type Profile, type Run, type RunSummary, type ServerResult } from "@/api";
 import type { Key } from "@/i18n";
@@ -32,13 +32,14 @@ interface Props {
   /** friends whose export files were imported; each one has a separate folder too */
   people: Person[];
   isBlocked: (ip: string) => boolean;
+  isRangeBlocked: (range: string) => boolean;
   onBlock: (s: ServerResult, game: string, target: string, whilePlaying: boolean) => Promise<void>;
   onUnblock: (ip: string) => Promise<void>;
   onChanged: () => void;
   onPeopleChanged: () => void | Promise<void>;
 }
 
-export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, onUnblock, onChanged, onPeopleChanged }: Props) {
+export function HistoryView({ t, games, counts, me, people, isBlocked, isRangeBlocked, onBlock, onUnblock, onChanged, onPeopleChanged }: Props) {
   // changes whenever anybody's number of scans changes (my own or a friend's that just arrived)
   const dataKey = JSON.stringify(counts) + "|" + people.map((p) => `${p.slug}:${p.total}`).join(",");
   const [who, setWho] = useState("");   // "" = me, otherwise the slug of an imported person
@@ -101,15 +102,19 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, 
   }, [rows, country, sort]);
 
   // block suggestions are about MY network: never offered from a friend's scans
-  const tips = useMemo(() => (rows && mine ? suggestions(rangeStats(rows), isBlocked) : []), [rows, mine, isBlocked]);
+  const tips = useMemo(() => (rows && mine ? suggestions(rangeStats(rows), isRangeBlocked) : []), [rows, mine, isRangeBlocked]);
 
   const chipCount = (g: string) => (person ? person.counts[g] ?? 0 : counts[g] ?? 0);
 
+  // quick clicks on different rows: only the answer for the row that is open now is used
+  const toggleSeq = useRef(0);
   const toggle = async (id: string) => {
+    const my = ++toggleSeq.current;
     if (open === id) { setOpen(""); setRun(null); return; }
     setOpen(id);
     setRun(null);
-    setRun(await api.historyGet(sel, id, who).catch(() => null));
+    const r = await api.historyGet(sel, id, who).catch(() => null);
+    if (my === toggleSeq.current) setRun(r);
   };
 
   const del = async (id: string) => {
@@ -171,7 +176,7 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, 
         )}
       </div>
 
-      {person && <p className="text-xs text-muted-foreground">{t("readOnlyNote")} <span className="font-medium text-foreground">{person.name}</span> · <span className="num">{person.importedAt}</span></p>}
+      {person && <p className="text-xs text-muted-foreground">{t("readOnlyNote")} <span className="font-medium text-foreground">{person.name}</span></p>}
 
       {/* one chip per game: switching games never mixes their scans */}
       <div className="flex flex-wrap gap-2">
@@ -191,7 +196,7 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, 
         ))}
       </div>
 
-      {sel && people.length > 0 && <CompareCard t={t} game={sel} meName={me.name || t("me")} people={people} reloadKey={reload} />}
+      {sel && people.length > 0 && <CompareCard key={sel} t={t} game={sel} meName={me.name || t("me")} people={people} reloadKey={reload} />}
 
       {rows === null ? (
         <div className="overflow-hidden rounded-xl border border-border bg-card" aria-busy="true">
@@ -217,7 +222,7 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, 
                 <option value="">{t("filterAll")}</option>
                 {countries.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
-              <select className={selectCls} value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+              <select className={selectCls} value={sort} aria-label={t("sortLabel")} onChange={(e) => setSort(e.target.value as Sort)}>
                 <option value="new">{t("sortNew")}</option>
                 <option value="old">{t("sortOld")}</option>
                 <option value="pingLow">{t("sortPingLow")}</option>
@@ -256,7 +261,7 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, 
                       {b && <Status variant={verdictVariant[b.verdict]}>{verdictLabel(b.verdict, t)}</Status>}
                     </div>
                     <div className="flex items-center justify-end gap-1.5">
-                      <Button variant="ghost" size="sm" onClick={() => toggle(r.id)}>
+                      <Button variant="ghost" size="sm" aria-expanded={isOpen} onClick={() => toggle(r.id)}>
                         {isOpen ? <ChevronUp /> : <ChevronDown />} {isOpen ? t("hide") : t("view")}
                       </Button>
                       <Button variant={confirmId === r.id ? "destructive" : "ghost"} size="sm" onClick={() => del(r.id)} aria-label={t("deleteRun")}>
@@ -265,7 +270,7 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, 
                     </div>
                   </div>
                   {isOpen && (
-                    <div className="grid gap-4 border-t border-border bg-background/40 p-4 md:grid-cols-2">
+                    <div className="grid gap-4 border-t border-border bg-background/40 p-4 md:grid-cols-2 2xl:grid-cols-3">
                       {run === null ? (
                         <><ServerCardSkeleton /><ServerCardSkeleton /></>
                       ) : (
