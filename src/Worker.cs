@@ -36,7 +36,13 @@ namespace GameNetKit
             string path = Path.Combine(dir, "state.json");
             string tmp = path + ".tmp";
             File.WriteAllText(tmp, Js.Serialize(st), new UTF8Encoding(false));
-            File.Copy(tmp, path, true);
+            // the window reads this file about three times a second: a sharing violation on the swap is retried, never fatal
+            for (int i = 0; i < 8; i++)
+            {
+                try { File.Copy(tmp, path, true); return; }
+                catch (IOException) { Thread.Sleep(40); }
+                catch (UnauthorizedAccessException) { Thread.Sleep(40); }
+            }
         }
 
         static bool CancelRequested() { return File.Exists(Path.Combine(dir, "cancel.flag")); }
@@ -130,18 +136,28 @@ namespace GameNetKit
             }
 
             secondsLeft = 0;
-            Put("analyzing");
-            if (Pktmon("etl2txt \"" + etl + "\" --out \"" + txt + "\"", out o) != 0 || !File.Exists(txt))
-                throw new Fail("capture", "etl2txt: " + o.Trim());
-
-            long parsed;
-            List<Srv> servers = Analyzer.ParseCapture(File.ReadLines(txt), ports, out parsed);
-            if (servers.Count == 0)
+            List<Srv> servers;
+            try
             {
-                string resDir = Path.Combine(dir, demoMode ? "Results-demo" : "Results", Program.Slug(game));
-                Directory.CreateDirectory(resDir);
-                try { File.Copy(txt, Path.Combine(resDir, "debug_capture.txt"), true); } catch { }
-                throw new Fail("nodata", "lines=" + parsed + ", ports=" + ports.Count + " (debug_capture.txt saved in Results)");
+                Put("analyzing");
+                if (Pktmon("etl2txt \"" + etl + "\" --out \"" + txt + "\"", out o) != 0 || !File.Exists(txt))
+                    throw new Fail("capture", "etl2txt: " + o.Trim());
+
+                long parsed;
+                servers = Analyzer.ParseCapture(File.ReadLines(txt), ports, out parsed);
+                if (servers.Count == 0)
+                {
+                    string resDir = Path.Combine(dir, demoMode ? "Results-demo" : "Results", Program.Slug(game));
+                    Directory.CreateDirectory(resDir);
+                    try { File.Copy(txt, Path.Combine(resDir, "debug_capture.txt"), true); } catch { }
+                    throw new Fail("nodata", "lines=" + parsed + ", ports=" + ports.Count + " (debug_capture.txt saved in Results)");
+                }
+            }
+            finally
+            {
+                // the capture can be hundreds of MB: it is not needed once the servers are known
+                try { File.Delete(etl); } catch { }
+                try { File.Delete(txt); } catch { }
             }
 
             Put("measuring");
@@ -187,6 +203,7 @@ namespace GameNetKit
             {
                 Pktmon("stop", out o);
                 Pktmon("filter remove", out o);
+                try { File.Delete(etl); File.Delete(txt); } catch { }
             }
         }
 
@@ -239,6 +256,12 @@ namespace GameNetKit
             File.WriteAllText(Path.Combine(histDir, id + ".json"), Js.Serialize(run), new UTF8Encoding(false));
         }
 
+        // text that starts like a spreadsheet formula (a reverse-DNS name or provider is chosen by a stranger) is defused with a leading quote
+        static string CsvText(string s)
+        {
+            return s.Length > 0 && "=+-@\t\r".IndexOf(s[0]) >= 0 && !(s.Length > 1 && char.IsDigit(s[1]) && (s[0] == '-' || s[0] == '+')) ? "'" + s : s;
+        }
+
         static void WriteCsv()
         {
             string resDir = Path.Combine(dir, demoMode ? "Results-demo" : "Results", Program.Slug(game));
@@ -249,7 +272,7 @@ namespace GameNetKit
             var sb = new StringBuilder();
             sb.AppendLine(string.Join(",", cols));
             foreach (var r in results)
-                sb.AppendLine(string.Join(",", cols.Select(c => "\"" + Convert.ToString(r[c] ?? "", System.Globalization.CultureInfo.InvariantCulture).Replace("\"", "\"\"") + "\"")));
+                sb.AppendLine(string.Join(",", cols.Select(c => "\"" + CsvText(Convert.ToString(r[c] ?? "", System.Globalization.CultureInfo.InvariantCulture)).Replace("\"", "\"\"") + "\"")));
             File.WriteAllText(csvPath, sb.ToString(), new UTF8Encoding(true));
             SaveHistory();
         }
