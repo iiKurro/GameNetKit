@@ -1,4 +1,4 @@
-// Variants modeled after the shadcn-style Button used in 21st.dev stepper demos (primary / secondary / outline / ghost).
+﻿// Variants modeled after the shadcn-style Button used in 21st.dev stepper demos (primary / secondary / outline / ghost).
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
@@ -27,7 +27,7 @@ export function Button({
   return (
     <button
       className={cn(
-        "inline-flex cursor-pointer items-center justify-center whitespace-nowrap font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/60 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
+        "inline-flex cursor-pointer items-center justify-center whitespace-nowrap font-medium transition-[color,background-color,transform] duration-150 active:scale-[0.98] outline-none focus-visible:ring-2 focus-visible:ring-primary/60 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
         variants[variant],
         sizes[size],
         className,
