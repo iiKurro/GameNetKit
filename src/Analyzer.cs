@@ -338,6 +338,27 @@ namespace GameNetKit
             return map;
         }
 
+        // The name of the internet provider and the country this PC connects from (never the address itself), saved with each scan:
+        // a server can be fine on one provider and bad on another, and this lets friends on different lines be compared.
+        public static Dictionary<string, object> OwnNet()
+        {
+            try
+            {
+                var req = (HttpWebRequest)WebRequest.Create("http://ip-api.com/json/?fields=status,isp,country");
+                req.Timeout = 8000;
+                using (var resp = (HttpWebResponse)req.GetResponse())
+                using (var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                {
+                    var d = (Dictionary<string, object>)new JavaScriptSerializer().DeserializeObject(sr.ReadToEnd());
+                    if (Convert.ToString(d["status"]) != "success") return null;
+                    string isp = Convert.ToString(d["isp"]), country = Convert.ToString(d["country"]);
+                    if (isp.Length > 60) isp = isp.Substring(0, 60);
+                    return new Dictionary<string, object> { { "isp", isp }, { "country", country } };
+                }
+            }
+            catch { return null; }
+        }
+
         public static string Ptr(string ip)
         {
             try
