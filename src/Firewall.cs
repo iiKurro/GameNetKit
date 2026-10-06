@@ -1,4 +1,4 @@
-﻿// Blocking one game-server address (or a /16../32 range) so the game cannot reach it. Runs elevated (UAC) via
+// Blocking one game-server address (or a /16../32 range) so the game cannot reach it. Runs elevated (UAC) via
 // "GameNetKit.exe --fw block|unblock|unblockall --ip x".
 //
 // Two independent methods, both removable and both only ever touching what this app created:
@@ -53,6 +53,63 @@ namespace GameNetKit
                 if (len < 16 || len > 32) return false;
             }
             return true;
+        }
+
+        // ------------------------------------------------------------------ never cut yourself off
+        static uint ToU(IPAddress a)
+        {
+            byte[] b = a.GetAddressBytes();
+            return ((uint)b[0] << 24) | ((uint)b[1] << 16) | ((uint)b[2] << 8) | b[3];
+        }
+
+        static void AddProtected(List<KeyValuePair<uint, string>> list, IPAddress a, string why)
+        {
+            if (a != null && a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !IPAddress.Any.Equals(a)) list.Add(new KeyValuePair<uint, string>(ToU(a), why + " (" + a + ")"));
+        }
+
+        // Addresses a block must never cover: this PC's own addresses, router and DNS servers, the big public DNS services, and the
+        // servers the app itself talks to. A /16 block (or any range) containing one of them is refused with the reason.
+        // "" = the target is fine.
+        public static string Protected(string target)
+        {
+            try
+            {
+                string[] p = target.Split('/');
+                uint ip = ToU(IPAddress.Parse(p[0]));
+                int len = p.Length == 2 ? int.Parse(p[1]) : 32;
+                uint mask = len == 0 ? 0 : 0xFFFFFFFFu << (32 - len);
+                uint start = ip & mask, end = start | ~mask;
+
+                var list = new List<KeyValuePair<uint, string>>();
+                try
+                {
+                    foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                    {
+                        if (nic.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                        var props = nic.GetIPProperties();
+                        foreach (var u in props.UnicastAddresses) AddProtected(list, u.Address, "your own address");
+                        foreach (var g in props.GatewayAddresses) AddProtected(list, g.Address, "your router");
+                        foreach (var d in props.DnsAddresses) AddProtected(list, d, "your DNS server");
+                    }
+                }
+                catch { }
+                foreach (string s in new[] { "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "149.112.112.112", "208.67.222.222", "208.67.220.220" })
+                    AddProtected(list, IPAddress.Parse(s), "a public DNS service");
+                foreach (string host in new[] { Program.SyncServer != "" ? new Uri(Program.SyncServer).Host : "api.github.com", "ip-api.com", "api.github.com" })
+                {
+                    try
+                    {
+                        string h = host;
+                        var t = System.Threading.Tasks.Task.Factory.StartNew(() => Dns.GetHostAddresses(h));
+                        if (t.Wait(2500)) foreach (var a in t.Result) AddProtected(list, a, "a server the app itself needs: " + h);
+                    }
+                    catch { }
+                }
+                foreach (var kv in list)
+                    if (kv.Key >= start && kv.Key <= end) return kv.Value;
+            }
+            catch { }
+            return "";
         }
 
         static string Flat(string s) { return (s ?? "").Trim().Replace("\r", "").Replace("\n", " "); }
@@ -188,7 +245,8 @@ namespace GameNetKit
         }
 
         // set once all firewall attempts failed in this process (the guard is long-lived): later blocks go straight to the route
-        static bool firewallRefuses;
+        // (a transient failure must not push every later block onto the all-protocol route for the guard's whole life: it retries after 10 minutes)
+        static DateTime firewallRefusesUntil = DateTime.MinValue;
 
         // Blocks one target: a firewall rule first, a dead-end route when Windows refuses firewall rules. Needs admin. 0 = done.
         // temporary: a route (if one is needed) only lives until the next reboot - used for blocks that follow a running game.
@@ -202,7 +260,7 @@ namespace GameNetKit
                 Remove(ip);   // always start clean so repeated clicks never create duplicates
 
                 int rc = 1;
-                if (!firewallRefuses)
+                if (DateTime.Now >= firewallRefusesUntil)
                 {
                     // 1) PowerShell's firewall cmdlet
                     rc = Powershell("New-NetFirewallRule -DisplayName '" + name + "' -Direction Outbound -Action Block -Protocol UDP -RemoteAddress " + ip +
@@ -218,8 +276,8 @@ namespace GameNetKit
                     rc = Netsh("advfirewall firewall add rule name=\"" + name + "\" dir=out action=block protocol=UDP remoteip=" + ip, out o);
                     Log("firewall (netsh) rc=" + rc + " " + Flat(o));
                     if (rc == 0) return 0;
-                    firewallRefuses = true;
-                    Log("firewall refuses rules: later blocks in this session use the route directly");
+                    firewallRefusesUntil = DateTime.Now.AddMinutes(10);
+                    Log("firewall refuses rules: blocks in the next 10 minutes use the route directly");
                 }
                 // 4) the firewall store refuses new rules on this PC: block with a dead-end route instead
                 rc = AddRoute(ip, temporary, out o);
