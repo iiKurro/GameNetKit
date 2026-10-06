@@ -81,7 +81,7 @@ export function ProfileDialog({ t, profile, mode, required, syncConfigured, onSa
   const inputCls = "h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/60";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--scrim)] p-4" role="dialog" aria-modal="true" aria-labelledby="profile-title">
       <div ref={box} className="enter max-h-full w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-6 shadow-2xl">
         <div className="mb-4 flex items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-xl bg-primary/15 text-primary"><Icon className="size-5" /></div>
