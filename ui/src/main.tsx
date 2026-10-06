@@ -1,5 +1,6 @@
-﻿import { StrictMode } from "react";
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import "@fontsource-variable/cairo/wght.css";
 import "./index.css";
 import { MotionConfig } from "motion/react";
 import App from "./App";
