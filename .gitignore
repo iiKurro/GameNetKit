@@ -1,2 +1,4 @@
 Results/
-dist/*.exe
+dist/
+ui/node_modules/
+ui/dist/
