@@ -1,7 +1,10 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, Ban, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Play, Radar, RefreshCw, ShieldCheck, Square, UserRound, Wifi, X } from "lucide-react";
 import { ProfileDialog } from "@/components/ProfileDialog";
-import { api, type BlockEntry, type GuardState, type Info, type Person, type Profile, type RunSummary, type ServerResult, type State, type UpdateInfo } from "@/api";
+import { AnimatePresence, motion } from "motion/react";
+import { AnimatedTabs } from "@/components/ui/animated-tabs";
+import { SettingsPopover } from "@/components/SettingsPopover";
+import { api, type BlockEntry, type GuardState, type Info, type Person, type Profile, type RunSummary, type Settings, type ServerResult, type State, type UpdateInfo } from "@/api";
 import { makeT, type Lang, type Key } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { covers } from "@/lib/cidr";
@@ -49,6 +52,8 @@ export default function App() {
   const [people, setPeople] = useState<Person[]>([]);
   const [editName, setEditName] = useState(false);
   const [lost, setLost] = useState(false);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [settingBusy, setSettingBusy] = useState("");
 
   const refreshPeople = useCallback(async () => {
     setPeople(await api.people().catch(() => [] as Person[]));
@@ -78,6 +83,7 @@ export default function App() {
 
   useEffect(() => {
     api.profile().then(setProfile).catch(() => {});
+    void refreshSettings();
     void refreshPeople();
     api.info().then((i) => {
       setInfo(i);
@@ -182,14 +188,45 @@ export default function App() {
     const r = await api.guardStart().catch(() => ({ ok: false, error: "x" } as { ok: boolean; error?: string }));
     if (!r.ok) setFwError(r.error === "uac" ? t("errBlockUac") : t("errGuard"));
     setGuard(await api.guard().catch(() => guard));
+    void refreshSettings();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lang, guard]);
 
   const guardStop = useCallback(async () => {
     await api.guardStop().catch(() => {});
     setGuard(await api.guard().catch(() => guard));
+    void refreshSettings();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guard]);
+
+  // remembered choices (guard on/off, background, start with Windows)
+  const refreshSettings = useCallback(async () => {
+    setSettings(await api.settings().catch(() => null));
+  }, []);
+
+  const changeSetting = useCallback(async (key: "guardAuto" | "background" | "startup", value: boolean) => {
+    setFwError("");
+    setSettingBusy(key);
+    const r = await api.settingsSet({ [key]: value }).catch(() => null);
+    if (!r) setFwError(t("errGuard"));
+    else if (r.ok === false) setFwError(r.error === "uac" ? t("errBlockUac") : r.error === "startup" ? `${t("errStartup")}\n${r.detail ?? ""}` : t("errGuard"));
+    await refreshSettings();
+    api.guard().then(setGuard).catch(() => {});
+    setSettingBusy("");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang, refreshSettings]);
+
+  // after an app update the installed copy of the guard is the old one until it is reinstalled
+  const updateGuard = useCallback(async () => {
+    setFwError("");
+    setSettingBusy("startup");
+    const r = await api.guardUpdate().catch(() => null);
+    if (!r || !r.ok) setFwError(r?.error === "uac" ? t("errBlockUac") : `${t("errStartup")}\n${r?.detail ?? ""}`);
+    await refreshSettings();
+    api.guard().then(setGuard).catch(() => {});
+    setSettingBusy("");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang, refreshSettings]);
 
   const syncBlocks = useCallback(async () => {
     setBlocks(await api.blocksSync().catch(() => [] as BlockEntry[]));
@@ -270,6 +307,7 @@ export default function App() {
             <Languages />
             {t("lang")}
           </Button>
+          {settings && <SettingsPopover t={t} settings={settings} busyKey={settingBusy} onChange={changeSetting} />}
         </div>
       </header>
 
@@ -301,30 +339,27 @@ export default function App() {
       )}
 
       {/* tabs */}
-      <nav className="flex gap-1 rounded-xl border border-border bg-card p-1" role="tablist">
-        {tabs.map((x) => {
+      <AnimatedTabs
+        tabs={tabs.map((x) => {
           const Icon = x.icon;
-          const active = tab === x.id;
-          return (
-            <button
-              key={x.id}
-              role="tab"
-              aria-selected={active}
-              onClick={() => setTab(x.id)}
-              className={cn(
-                "flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
-                active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Icon className={cn("size-4", active && "text-primary")} />
-              {x.label}
-              {x.count != null && x.count > 0 && (
-                <span className={cn("num rounded-full px-1.5 text-[11px]", x.id === "blocked" ? "bg-destructive/15 text-destructive" : "bg-muted text-muted-foreground")}>{x.count}</span>
-              )}
-            </button>
-          );
+          return { id: x.id, label: x.label, icon: <Icon />, count: x.count, countTone: x.id === "blocked" ? ("danger" as const) : ("neutral" as const) };
         })}
-      </nav>
+        active={tab}
+        onChange={(id) => setTab(id as Tab)}
+        label="GameNetKit"
+      />
+
+      {settings && guard.running && guard.version && info && guard.version !== info.version && settings.taskInstalled && (
+        <div className="enter flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 p-4">
+          <div className="min-w-0">
+            <div className="text-sm font-medium">{t("guardOutdated")} <span className="num text-xs text-muted-foreground">({guard.version} → {info.version})</span></div>
+            <p className="mt-1 text-xs text-muted-foreground">{t("guardOutdatedText")}</p>
+          </div>
+          <Button onClick={updateGuard} disabled={!!settingBusy}>
+            <ShieldCheck /> {t("guardUpdateBtn")}
+          </Button>
+        </div>
+      )}
 
       {fwError && (
         <div className="enter flex items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -333,6 +368,15 @@ export default function App() {
         </div>
       )}
 
+      {/* a short cross-fade carries the eye from one section to the next (continuity, not decoration) */}
+      <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={tab}
+        className="flex flex-1 flex-col gap-5"
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0, transition: { duration: 0.18, ease: [0.16, 1, 0.3, 1] } }}
+        exit={{ opacity: 0, transition: { duration: 0.09 } }}
+      >
       {tab === "history" && (
         <HistoryView
           t={t}
@@ -496,6 +540,8 @@ export default function App() {
           </section>
         </main>
       )}
+      </motion.div>
+      </AnimatePresence>
 
       <footer className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
         <span className="min-w-0 break-all">{t("dataFolder")}: <span className="num" dir="ltr">{info?.dataDir ?? profile?.dataDir ?? ""}</span></span>
