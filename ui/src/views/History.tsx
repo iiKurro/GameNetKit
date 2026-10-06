@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Download, FileUp, Gamepad2, History as HistoryIcon, Trash2, UserRound } from "lucide-react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronUp, Gamepad2, History as HistoryIcon, Trash2, UserRound } from "lucide-react";
 import { api, type Person, type Profile, type Run, type RunSummary, type ServerResult } from "@/api";
 import type { Key } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -39,6 +39,8 @@ interface Props {
 }
 
 export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, onUnblock, onChanged, onPeopleChanged }: Props) {
+  // changes whenever anybody's number of scans changes (my own or a friend's that just arrived)
+  const dataKey = JSON.stringify(counts) + "|" + people.map((p) => `${p.slug}:${p.total}`).join(",");
   const [who, setWho] = useState("");   // "" = me, otherwise the slug of an imported person
   const person = people.find((p) => p.slug === who) ?? null;
   const mine = !person;
@@ -50,12 +52,9 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, 
   const [confirmId, setConfirmId] = useState("");
   const [confirmAll, setConfirmAll] = useState(false);
   const [confirmPerson, setConfirmPerson] = useState(false);
-  const [exported, setExported] = useState("");
-  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [country, setCountry] = useState("");
   const [sort, setSort] = useState<Sort>("new");
   const [reload, setReload] = useState(0);
-  const fileInput = useRef<HTMLInputElement>(null);
 
   // an imported person that was deleted must not stay selected
   useEffect(() => { if (who && !people.some((p) => p.slug === who)) setWho(""); }, [people, who]);
@@ -68,9 +67,17 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, 
   }, [sel, who, onChanged]);
 
   useEffect(() => {
-    setRows(null); setOpen(""); setRun(null); setConfirmId(""); setConfirmAll(false); setConfirmPerson(false); setExported(""); setCountry("");
+    setRows(null); setOpen(""); setRun(null); setConfirmId(""); setConfirmAll(false); setConfirmPerson(false); setCountry("");
     void load();
   }, [load]);
+
+  // new scans can arrive from friends while this view is open: reload the list quietly (nothing else is reset)
+  useEffect(() => {
+    if (!sel) return;
+    let alive = true;
+    api.history(sel, who).then((r) => { if (alive) setRows(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, [dataKey, sel, who]);
 
   useEffect(() => {
     if (!confirmId && !confirmAll && !confirmPerson) return;
@@ -120,32 +127,7 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, 
     await load(); setReload((n) => n + 1); onPeopleChanged();
   };
 
-  const exportGame = async () => {
-    const r = await api.historyExport(sel).catch(() => null);
-    if (r?.ok) { setExported(r.path); setNote(null); setTimeout(() => setExported(""), 8000); }
-  };
-
-  const exportAll = async () => {
-    const r = await api.historyExportAll().catch(() => null);
-    if (r?.ok) { setExported(r.path); setNote({ ok: true, text: t("exportedAll") }); setTimeout(() => { setExported(""); setNote(null); }, 9000); }
-  };
-
-  const importFile = async (file: File | undefined) => {
-    if (!file) return;
-    setNote(null);
-    try {
-      const text = await file.text();
-      const r = await api.peopleImport(text);
-      if (r.ok) {
-        setNote({ ok: true, text: `${t("importOk")} ${r.name}: ${r.runs} ${t("importRuns")}` });
-        await onPeopleChanged();   // the new person must be in the list before they can be selected
-        if (r.slug) setWho(r.slug);
-      } else {
-        setNote({ ok: false, text: r.error === "own file" ? t("importOwn") : r.error?.startsWith("bad") || r.error === "no player" ? t("importBad") : t("importFail") });
-      }
-    } catch { setNote({ ok: false, text: t("importFail") }); }
-    if (fileInput.current) fileInput.current.value = "";
-  };
+  // (export / import are gone: scans are shared with the group automatically, see the sync status in Settings)
 
   const deletePerson = async () => {
     if (!person) return;
@@ -182,15 +164,6 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, 
           </button>
         ))}
         <span className="flex-1" />
-        <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" onChange={(e) => void importFile(e.target.files?.[0])} />
-        <Button variant="outline" size="sm" onClick={() => fileInput.current?.click()}>
-          <FileUp /> {t("importFile")}
-        </Button>
-        {mine && (
-          <Button variant="secondary" size="sm" onClick={exportAll}>
-            <Download /> {t("exportAll")}
-          </Button>
-        )}
         {person && (
           <Button variant={confirmPerson ? "destructive" : "ghost"} size="sm" onClick={deletePerson}>
             <Trash2 /> {confirmPerson ? t("confirmDeletePerson") : t("deletePerson")}
@@ -198,18 +171,7 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, 
         )}
       </div>
 
-      {note && (
-        <div className={cn("enter rounded-lg border px-3 py-2 text-xs", note.ok ? "border-success/30 bg-success/10 text-success" : "border-destructive/30 bg-destructive/10 text-destructive")}>
-          {note.text}
-        </div>
-      )}
-      {exported && (
-        <div className="enter rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs">
-          <div className="font-medium text-success">{t("exported")}</div>
-          <div className="num mt-0.5 break-all text-muted-foreground" dir="ltr">{exported}</div>
-        </div>
-      )}
-      {person && <p className="text-xs text-muted-foreground">{t("readOnlyNote")} <span className="font-medium text-foreground">{person.name}</span> · {t("importedTag")} <span className="num">{person.importedAt}</span></p>}
+      {person && <p className="text-xs text-muted-foreground">{t("readOnlyNote")} <span className="font-medium text-foreground">{person.name}</span> · <span className="num">{person.importedAt}</span></p>}
 
       {/* one chip per game: switching games never mixes their scans */}
       <div className="flex flex-wrap gap-2">
@@ -261,11 +223,6 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, onBlock, 
                 <option value="pingLow">{t("sortPingLow")}</option>
                 <option value="pingHigh">{t("sortPingHigh")}</option>
               </select>
-              {mine && (
-                <Button variant="secondary" size="sm" onClick={exportGame}>
-                  <Download /> {t("exportHistory")}
-                </Button>
-              )}
               <Button variant={confirmAll ? "destructive" : "ghost"} size="sm" onClick={clear}>
                 <Trash2 /> {confirmAll ? t("confirmClear") : t("clearAll")}
               </Button>
