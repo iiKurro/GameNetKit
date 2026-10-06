@@ -1,27 +1,40 @@
-﻿# GameNetKit
+# GameNetKit
 
-ظٹظƒط´ظپ ط³ظٹط±ظپط±ط§طھ ط§ظ„ظ„ط¹ط¨ط© ط§ظ„ظ„ظٹ طھطھطµظ„ ظپظٹظ‡ط§ (ط±ظˆظƒظٹطھ ظ„ظٹظ‚طŒ ط£ظˆظپط± ظˆط§طھط´...) ظˆظٹظ‚ظٹط³ ط§ظ„ط¨ظ†ظ‚ ظˆط§ظ„ظ€ jitter ظˆظپظ‚ط¯ط§ظ† ط§ظ„ط­ط²ظ… ظ„ظƒظ„ ط³ظٹط±ظپط±طŒ ظˆظٹط¹ط±ط¶ ط¯ظˆظ„طھظ‡ ظˆظ…ط¯ظٹظ†طھظ‡.
-Finds the game servers you connect to and measures ping, jitter and packet loss for each, with its country and city.
+أداة لفحص سيرفرات الألعاب: تكشف السيرفر اللي تتصل فيه وتقيس البنق والتذبذب وفقدان الحزم، وتعرض دولته ومدينته.
+A small tool that finds the game server you are connected to and measures ping, jitter and packet loss, with its country and city.
 
-## ط§ظ„ط§ط³طھط®ط¯ط§ظ… / Usage
-1. ظ†ط²ظ‘ظ„ `GameNetKit.exe` ظˆ`games.json` ظˆ`config.json` ظ…ظ† [Releases](../../releases/latest) ظˆط­ط·ظ‡ط§ ظپظٹ ظ†ظپط³ ط§ظ„ظ…ط¬ظ„ط¯.
-2. ط´ط؛ظ‘ظ„ `GameNetKit.exe` ظˆظˆط§ظپظ‚ ط¹ظ„ظ‰ طµظ„ط§ط­ظٹط§طھ ط§ظ„ظ…ط¯ظٹط± (ظ…ط·ظ„ظˆط¨ط© ظ„ط£ظ† ط§ظ„ط§ظ„طھظ‚ط§ط· ظٹطھظ… ط¹ط¨ط± `pktmon`).
-3. ط´ط؛ظ‘ظ„ ط§ظ„ظ„ط¹ط¨ط© ظˆط§ط¯ط®ظ„ ظ…ط¨ط§ط±ط§ط©طŒ ط§ط¶ط؛ط· EnterطŒ ظˆط§ظ„ط¹ط¨ 4 ط¯ظ‚ط§ظٹظ‚.
-4. ط¨ظٹط·ظ„ط¹ ط§ظ„طھظ‚ط±ظٹط± ظˆظ…ظ„ظپ CSV ظپظٹ ظ…ط¬ظ„ط¯ `Results`. ط§ظ„طµظپ ط§ظ„ط£ظˆظ„ (ط£ظƒط«ط± طھط±ط§ظ‚ظƒ) ظ‡ظˆ ط؛ط§ظ„ط¨ظ‹ط§ ط³ظٹط±ظپط± ط§ظ„ظ…ط§طھط´.
+## الاستخدام / Usage
+1. نزّل `GameNetKit.exe` من [Releases](../../releases/latest) (ملف واحد، ما يحتاج تثبيت).
+2. شغّله: تفتح نافذة البرنامج. اختر اللعبة واضغط **ابدأ الفحص**، ووافق على نافذة صلاحيات المدير (مطلوبة للالتقاط عبر `pktmon`).
+3. شغّل اللعبة وادخل ماتش فعلي، اضغط **بدأت الماتش**، والعب 4 دقايق.
+4. تطلع النتائج: السيرفر الأكثر تراقك هو غالبًا سيرفر الماتش.
+5. زر **تحقق من التحديث** يفحص آخر إصدار في GitHub ويحدّث البرنامج بنفسه (بموافقتك).
 
-## ط§ظ„ط£ظ…ط§ظ† / Safety
-- Read-only: it captures packet headers (UDP) with Windows' built-in `pktmon`, pings the servers, and nothing else. It blocks nothing and changes no settings.
-- The only data that leaves your PC: the game servers' IP addresses, sent to [ip-api.com](https://ip-api.com) to look up the country/city.
-- The source is `GameNetKit.ps1` (PowerShell). The exe is that script compiled with [PS2EXE](https://github.com/MScholtes/PS2EXE). Some antivirus programs flag PS2EXE builds as suspicious (false positive) - read the script, or run `Start.bat` instead of the exe.
+الألعاب المدعومة حاليًا: Rocket League، Overwatch 2 (جرّبت الواجهة بوضع محاكاة؛ الالتقاط الحقيقي مع اللعبة قيد الاختبار).
 
-## ط¥ط¶ط§ظپط© ظ„ط¹ط¨ط© / Add a game
-Edit `games.json`: set `enabled` to `true`, or add a game with its process name (from Task Manager).
+## الأمان / Safety
+- الواجهة تشتغل بدون صلاحيات مدير. الصلاحيات تُطلب فقط وقت الفحص، لعملية منفصلة تسوي الالتقاط.
+- Read-only: it captures UDP packet *headers* with Windows' built-in `pktmon`, pings the servers, nothing else. It never touches the game process or its memory/files, blocks nothing, and changes no settings.
+- The only data that leaves your PC: the game servers' IP addresses, sent to [ip-api.com](https://ip-api.com) to look up country/city; and the update check, which calls the GitHub releases API.
+- The app is a local web page served on `127.0.0.1` (random port, secret token per run) shown in an Edge app window. It makes no outside connections except the two above.
+- No official statement from Epic/Blizzard covers tools like this. The risk is very low (network monitoring only), but it is not zero.
 
-## ط§ط®طھط¨ط§ط± ط¨ط¯ظˆظ† ظ„ط¹ط¨ط© / Test without a game
-`SelfTest.bat` (or `GameNetKit.exe -SelfTest`).
-
-## ط§ظ„ط¨ظ†ط§ط، / Build
-```powershell
-Install-Module ps2exe -Scope CurrentUser
-Invoke-ps2exe -inputFile GameNetKit.ps1 -outputFile dist\GameNetKit.exe -requireAdmin -title GameNetKit
+## إضافة لعبة / Add a game
+ضع ملف `games.json` بجانب الـ exe:
+```json
+[
+  { "name": "Rocket League", "process": "RocketLeague.exe", "enabled": true },
+  { "name": "Overwatch 2", "process": "Overwatch.exe", "enabled": true }
+]
 ```
+والإعدادات (اختيارية) في `config.json`: `captureSeconds`, `topServers`, `pingCount`.
+
+## البناء / Build
+Requires Node.js and Windows (uses the C# compiler that ships with .NET Framework 4).
+```powershell
+.\build.ps1
+```
+ينتج `dist\GameNetKit.exe`.
+
+## Credits
+UI built with React + Tailwind. Components adapted from [21st.dev](https://21st.dev): Server Card by Mohammad Shehadeh / Hirael (MIT), Status by diceui, Vertical Stepper by sean0205.
