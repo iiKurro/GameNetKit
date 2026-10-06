@@ -1,4 +1,4 @@
-// Elevated worker: waits for the game, captures UDP headers with pktmon, measures servers, writes state.json.
+﻿// Elevated worker: waits for the game, captures UDP headers with pktmon, measures servers, writes state.json.
 // Runs as a separate (admin) process so the UI itself never needs elevation.
 using System;
 using System.Collections.Generic;
@@ -136,7 +136,7 @@ namespace GameNetKit
             List<Srv> servers = Analyzer.ParseCapture(File.ReadLines(txt), ports, out parsed);
             if (servers.Count == 0)
             {
-                string resDir = Path.Combine(dir, "Results");
+                string resDir = Path.Combine(dir, demoMode ? "Results-demo" : "Results", Program.Slug(game));
                 Directory.CreateDirectory(resDir);
                 try { File.Copy(txt, Path.Combine(resDir, "debug_capture.txt"), true); } catch { }
                 throw new Fail("nodata", "lines=" + parsed + ", ports=" + ports.Count + " (debug_capture.txt saved in Results)");
@@ -178,7 +178,7 @@ namespace GameNetKit
         // Saves the finished run as a history entry (id = csv file name) so the UI can list and delete it later.
         static void SaveHistory()
         {
-            string histDir = Path.Combine(dir, demoMode ? "History-demo" : "History");
+            string histDir = Path.Combine(dir, demoMode ? "History-demo" : "History", Program.Slug(game));
             Directory.CreateDirectory(histDir);
             string id = Path.GetFileNameWithoutExtension(csvPath);
             var run = new Dictionary<string, object>
@@ -191,9 +191,9 @@ namespace GameNetKit
 
         static void WriteCsv()
         {
-            string resDir = Path.Combine(dir, demoMode ? "Results-demo" : "Results");
+            string resDir = Path.Combine(dir, demoMode ? "Results-demo" : "Results", Program.Slug(game));
             Directory.CreateDirectory(resDir);
-            string safe = new string(game.Where(char.IsLetterOrDigit).ToArray());
+            string safe = Program.Slug(game);
             csvPath = Path.Combine(resDir, safe + "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".csv");
             string[] cols = { "ip", "port", "country", "city", "provider", "host", "packets", "kb", "avg", "max", "jitter", "loss", "verdict" };
             var sb = new StringBuilder();
