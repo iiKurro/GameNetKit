@@ -60,7 +60,7 @@ export function AnimatedTabs({ tabs, active, onChange, className, label }: Props
             onClick={() => onChange(tab.id)}
             onKeyDown={(e) => onKeyDown(e, i)}
             className={cn(
-              "relative flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium outline-none transition-colors",
+              "relative flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg px-2 py-2 text-sm font-medium outline-none transition-colors sm:px-3",
               "focus-visible:ring-2 focus-visible:ring-primary/60",
               on ? "text-foreground" : "text-muted-foreground hover:text-foreground",
             )}
@@ -73,7 +73,7 @@ export function AnimatedTabs({ tabs, active, onChange, className, label }: Props
               />
             )}
             {tab.icon && <span className={cn("relative z-10 [&_svg]:size-4", on && "text-primary")}>{tab.icon}</span>}
-            <span className="relative z-10">{tab.label}</span>
+            <span className="relative z-10 max-[540px]:sr-only">{tab.label}</span>
             {tab.count != null && tab.count > 0 && (
               <span
                 className={cn(
