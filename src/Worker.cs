@@ -46,7 +46,7 @@ namespace GameNetKit
         {
             dir = a["dir"];
             game = a.ContainsKey("game") ? a["game"] : "";
-            string proc = a.ContainsKey("process") ? a["process"].Replace(".exe", "") : "";
+            string proc = a.ContainsKey("process") ? a["process"] : "";   // one or more names, separated by |
             totalSeconds = a.ContainsKey("seconds") ? int.Parse(a["seconds"]) : 240;
             int top = a.ContainsKey("top") ? int.Parse(a["top"]) : 8;
             int pings = a.ContainsKey("pings") ? int.Parse(a["pings"]) : 10;
@@ -80,11 +80,24 @@ namespace GameNetKit
             }
         }
 
+        // "cod.exe|other.exe" -> every running process with one of these names (a game can ship under more than one exe)
+        static List<Process> Running(string proc)
+        {
+            var list = new List<Process>();
+            foreach (string n in proc.Split('|'))
+            {
+                string name = n.Trim();
+                if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = name.Substring(0, name.Length - 4);
+                if (name != "") list.AddRange(Process.GetProcessesByName(name));
+            }
+            return list;
+        }
+
         static void RunReal(string proc, int top, int pings)
         {
             secondsLeft = totalSeconds;
             Put("waiting_game");
-            while (Process.GetProcessesByName(proc).Length == 0) { CheckCancel(); Thread.Sleep(1000); }
+            while (Running(proc).Count == 0) { CheckCancel(); Thread.Sleep(1000); }
 
             Put("ready");
             WaitForMatch(proc);   // starts by itself when match traffic appears, or when the user presses the button
@@ -110,7 +123,7 @@ namespace GameNetKit
                     CheckCancel();
                     if (tick % 2 == 0)
                     {
-                        var pids = new HashSet<int>(Process.GetProcessesByName(proc).Select(p => p.Id));
+                        var pids = new HashSet<int>(Running(proc).Select(p => p.Id));
                         Analyzer.CollectUdpPorts(pids, ports);
                     }
                     secondsLeft = (int)Math.Ceiling((end - DateTime.Now).TotalSeconds);
@@ -164,7 +177,7 @@ namespace GameNetKit
                 {
                     CheckCancel();
                     if (File.Exists(goFlag)) return;
-                    var pids = new HashSet<int>(Process.GetProcessesByName(proc).Select(p => p.Id));
+                    var pids = new HashSet<int>(Running(proc).Select(p => p.Id));
                     Analyzer.CollectUdpPorts(pids, ports);
                     try { File.Delete(etl); File.Delete(txt); } catch { }
                     if (Pktmon("start --capture --comp nics --pkt-size 64 --file-name \"" + etl + "\" --file-size 50", out o) != 0) { WaitManual(goFlag); return; }
