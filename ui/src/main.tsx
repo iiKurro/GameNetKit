@@ -1,10 +1,14 @@
 ﻿import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
+import { MotionConfig } from "motion/react";
 import App from "./App";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    {/* "user": animations that move things are reduced or skipped when Windows asks for less motion */}
+    <MotionConfig reducedMotion="user">
+      <App />
+    </MotionConfig>
   </StrictMode>,
 );
