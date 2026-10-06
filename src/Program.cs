@@ -17,11 +17,12 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.2.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "0.3.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
-        public static readonly string DataDir = Path.Combine(
+        public static string DataDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GameNetKit");
+        public static bool DemoMode;
 
         [STAThread]
         public static int Main(string[] argv)
@@ -29,7 +30,10 @@ namespace GameNetKit
             ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072 | SecurityProtocolType.Tls;
             var args = ParseArgs(argv);
             if (args.ContainsKey("fakeversion")) Version = args["fakeversion"];
+            // demo runs live in their own folder so they can never touch real results, blocks or a running instance
+            if (args.ContainsKey("demo") && !args.ContainsKey("worker")) { DemoMode = true; DataDir = Path.Combine(DataDir, "demo-data"); }
             if (args.ContainsKey("worker")) return Worker.Run(args);
+            if (args.ContainsKey("fw")) return Firewall.Run(args);
             if (args.ContainsKey("selftest")) return SelfTest();
             return new UiHost(args).Run();
         }
@@ -84,7 +88,7 @@ namespace GameNetKit
         }
     }
 
-    public class UiHost
+    public partial class UiHost
     {
         readonly Dictionary<string, string> args;
         readonly JavaScriptSerializer js = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
@@ -116,7 +120,7 @@ namespace GameNetKit
             Directory.CreateDirectory(Program.DataDir);
 
             bool created;
-            using (var mutex = new Mutex(true, "GameNetKit.SingleInstance", out created))
+            using (var mutex = new Mutex(true, Program.DemoMode ? "GameNetKit.SingleInstance.Demo" : "GameNetKit.SingleInstance", out created))
             {
                 if (!created)
                 {
@@ -261,6 +265,13 @@ namespace GameNetKit
                     case "/api/reset": try { File.Delete(statePath); } catch { } ClearFlags(); result = Ok(); break;
                     case "/api/openfolder": OpenFolder(); result = Ok(); break;
                     case "/api/heartbeat": seenBeat = true; lastBeat = DateTime.Now; result = Ok(); break;
+                    case "/api/blocks": result = Blocks(); break;
+                    case "/api/block": result = Block(ReadBody(ctx)); break;
+                    case "/api/unblock": result = Unblock(ReadBody(ctx)); break;
+                    case "/api/history": result = HistoryList(); break;
+                    case "/api/history/get": result = HistoryGet(ReadBody(ctx)); break;
+                    case "/api/history/delete": result = HistoryDelete(ReadBody(ctx)); break;
+                    case "/api/history/clear": result = HistoryClear(); break;
                     case "/api/update/check": result = CheckUpdate(); break;
                     case "/api/update/apply": result = ApplyUpdate(); break;
                     default: Send(ctx, 404, "text/plain", "not found"); return;
@@ -416,7 +427,7 @@ namespace GameNetKit
 
         void OpenFolder()
         {
-            string dir = Path.Combine(Program.DataDir, "Results");
+            string dir = ResultsDir;
             Directory.CreateDirectory(dir);
             Process.Start("explorer.exe", "\"" + dir + "\"");
         }
