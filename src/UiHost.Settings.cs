@@ -18,13 +18,13 @@ namespace GameNetKit
         {
             lock (settingsLock)
             {
-                var s = new Dictionary<string, object> { { "guardAuto", false }, { "background", true }, { "startup", false } };
+                var s = new Dictionary<string, object> { { "guardAuto", false }, { "background", true }, { "startup", false }, { "notify", true }, { "sound", true } };
                 try
                 {
                     if (File.Exists(SettingsPath))
                     {
                         var d = (Dictionary<string, object>)js.DeserializeObject(File.ReadAllText(SettingsPath));
-                        foreach (string k in new[] { "guardAuto", "background", "startup" })
+                        foreach (string k in new[] { "guardAuto", "background", "startup", "notify", "sound" })
                             if (d.ContainsKey(k) && d[k] is bool) s[k] = d[k];
                     }
                 }
@@ -88,6 +88,9 @@ namespace GameNetKit
                 var r = SetStartup((bool)body["startup"]);
                 if (!(bool)r["ok"]) return r;
             }
+
+            foreach (string k in new[] { "notify", "sound" })
+                if (body.ContainsKey(k) && body[k] is bool) Remember(k, (bool)body[k]);
 
             if (body.ContainsKey("guardAuto") && body["guardAuto"] is bool)
             {
