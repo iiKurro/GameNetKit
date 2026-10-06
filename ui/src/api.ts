@@ -108,4 +108,5 @@ export const api = {
   historyGet: (id: string) => call<Run>("/api/history/get", { id }),
   historyDelete: (id: string) => call<{ ok: boolean }>("/api/history/delete", { id }),
   historyClear: () => call<{ ok: boolean }>("/api/history/clear", {}),
+  historyExport: () => call<{ ok: boolean; path: string; count: number }>("/api/history/export", {}),
 };
