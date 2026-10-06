@@ -17,12 +17,19 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.9.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "1.0.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GameNetKit");
         public static bool DemoMode;
+
+        // The group server the app shares scans with (set once the server is deployed; "--syncserver URL" overrides it for tests).
+        // The address is not a secret: what protects the data is the group code each player types in.
+        public static string SyncServer = "https://gamenetkit.gamenetkit-server.workers.dev";
+
+        // "--datadir PATH" runs a second, separate copy (used to test two players on one PC); its locks get their own names
+        public static string InstanceSuffix = "";
 
         // folder-safe name of a game: "Rocket League" -> "RocketLeague"
         public static string Slug(string game)
@@ -44,6 +51,7 @@ namespace GameNetKit
             if (args.ContainsKey("fakeversion")) Version = args["fakeversion"];
             // demo runs live in their own folder so they can never touch real results, blocks or a running instance
             if (args.ContainsKey("demo") && !args.ContainsKey("worker") && !args.ContainsKey("fw")) { DemoMode = true; DataDir = Path.Combine(DataDir, "demo-data"); }
+            if (args.ContainsKey("datadir")) { DataDir = args["datadir"]; InstanceSuffix = "." + ((uint)DataDir.ToLowerInvariant().GetHashCode()); }
             if (args.ContainsKey("worker")) return Worker.Run(args);
             if (args.ContainsKey("fw")) return Firewall.Run(args);
             if (args.ContainsKey("guard")) return Guard.Run();
@@ -157,7 +165,7 @@ namespace GameNetKit
             Directory.CreateDirectory(Program.DataDir);
 
             bool created;
-            using (var mutex = new Mutex(true, Program.DemoMode ? "GameNetKit.SingleInstance.Demo" : "GameNetKit.SingleInstance", out created))
+            using (var mutex = new Mutex(true, (Program.DemoMode ? "GameNetKit.SingleInstance.Demo" : "GameNetKit.SingleInstance") + Program.InstanceSuffix, out created))
             {
                 if (!created)
                 {
@@ -181,6 +189,7 @@ namespace GameNetKit
                 File.WriteAllText(Path.Combine(Program.DataDir, "port.txt"), port + "|" + token);
                 var thread = new Thread(Serve) { IsBackground = true };
                 thread.Start();
+                StartSyncLoop();
 
                 // remembered choice: the guard comes back by itself (silently with the sign-in task, otherwise with Windows' admin prompt)
                 if (Setting("guardAuto"))
@@ -353,6 +362,9 @@ namespace GameNetKit
                     case "/api/opendata": OpenData(); result = Ok(); break;
                     case "/api/blocks": result = Blocks(); break;
                     case "/api/blocks/sync": result = SyncBlocks(); break;
+                    case "/api/sync/state": result = SyncState(); break;
+                    case "/api/sync/config": result = SyncConfigure(ReadBody(ctx)); break;
+                    case "/api/sync/now": result = SyncNow(); break;
                     case "/api/settings": result = SettingsGet(); break;
                     case "/api/settings/set": result = SettingsSet(ReadBody(ctx)); break;
                     case "/api/guard/update": result = GuardInstallUpdate(); break;
