@@ -1,4 +1,4 @@
-// UiHost part 2: blocked servers (firewall) and per-game run history. C# 5 / .NET Framework 4.
+﻿// UiHost part 2: blocked servers (firewall) and per-game run history. C# 5 / .NET Framework 4.
 //
 // Layout on disk (nothing is ever shared between games):
 //   History\<Game>\<Game>_yyyyMMdd_HHmmss.json   one file per scan
@@ -71,13 +71,13 @@ namespace GameNetKit
             if (Demo) return LoadBlocks();
             var known = LoadBlocks();
             var result = new List<Dictionary<string, object>>();
-            foreach (string target in Firewall.ListTargets())
+            foreach (var kv in Firewall.ListTargets())
             {
+                string target = kv.Key;
                 var e = known.FirstOrDefault(b => (string)b["ip"] == target);
-                result.Add(e ?? new Dictionary<string, object>
-                {
-                    { "ip", target }, { "label", "" }, { "game", "" }, { "time", "" }
-                });
+                if (e == null) e = new Dictionary<string, object> { { "ip", target }, { "label", "" }, { "game", "" }, { "time", "" } };
+                e["method"] = kv.Value;
+                result.Add(e);
             }
             SaveBlocks(result);
             return result;
@@ -111,13 +111,15 @@ namespace GameNetKit
                 if (rc != 0) return FwFail("firewall", FwWhy(rc));
                 if (!Firewall.IsActive(ip)) return FwFail("firewall", "rule was added but could not be found afterwards");
             }
+            string method = Demo ? "firewall" : Firewall.MethodOf(ip);
             var list = LoadBlocks().Where(b => (string)b["ip"] != ip).ToList();
             list.Add(new Dictionary<string, object>
             {
                 { "ip", ip },
                 { "label", body.ContainsKey("label") ? Convert.ToString(body["label"]) : "" },
                 { "game", body.ContainsKey("game") ? Convert.ToString(body["game"]) : "" },
-                { "time", DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) }
+                { "time", DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) },
+                { "method", method }
             });
             SaveBlocks(list);
             return Ok();
