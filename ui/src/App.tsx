@@ -1,23 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Ban, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Lightbulb, Play, Radar, RefreshCw, ShieldCheck, Square, LockKeyhole, UserRound, X } from "lucide-react";
+import { Activity, Ban, Check, Copy, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Lightbulb, LockKeyhole, Moon, Play, Radar, RefreshCw, ShieldCheck, Square, Sun, UserRound, X } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { ProfileDialog } from "@/components/ProfileDialog";
 import { AdminPanel } from "@/components/AdminPanel";
 import { motion } from "motion/react";
 import { AnimatedTabs } from "@/components/ui/animated-tabs";
 import { SettingsPopover } from "@/components/SettingsPopover";
-import { api, type BlockEntry, type GuardState, type Info, type Person, type Profile, type RunSummary, type Settings, type SyncState, type ServerResult, type State, type UpdateInfo } from "@/api";
-import { makeT, type Lang, type Key } from "@/i18n";
+import { api, type BlockEntry, type GuardState, type Info, type Person, type Phase, type Profile, type RunSummary, type Settings, type SyncState, type ServerResult, type State, type UpdateInfo } from "@/api";
+import { makeT, type Lang } from "@/i18n";
+import { applyDensity, applyTheme, loadDensity, loadTheme, type Density, type Theme } from "@/lib/prefs";
+import { copyText, summaryText } from "@/lib/summary";
+import { Scope } from "@/components/Scope";
+import { Welcome } from "@/components/Welcome";
 import { cn } from "@/lib/utils";
 import { covers } from "@/lib/cidr";
 import { Button } from "@/components/ui/button";
 import { Status } from "@/components/ui/status";
 import { VerticalStepper } from "@/components/ui/stepper";
-import { ResultCard, locationOf } from "@/components/ResultCard";
+import { ResultCard, locationOf, verdictLabel } from "@/components/ResultCard";
 import { Suggestions } from "@/components/Suggestions";
 import { InsightsView } from "@/views/Insights";
 import { buildInsight, rangeBlocked, type Source } from "@/lib/insights";
-import { Skeleton, ServerCardSkeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "@/components/ui/skeleton";
 import { rangeStats, suggestions } from "@/lib/stats";
 import { HistoryView } from "@/views/History";
 import { BlockedView } from "@/views/Blocked";
@@ -55,6 +59,17 @@ export default function App() {
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   const [fwError, setFwError] = useState("");
   const [notice, setNotice] = useState("");
+  const [theme, setTheme] = useState<Theme>(loadTheme);
+  const [density, setDensity] = useState<Density>(loadDensity);
+  const [welcome, setWelcome] = useState(false);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const say = useCallback((text: string) => {
+    setNotice(text);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(""), 7000);
+  }, []);
+  useEffect(() => { applyTheme(theme); }, [theme]);
+  useEffect(() => { applyDensity(density); }, [density]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [scanRows, setScanRows] = useState<RunSummary[]>([]);
   const [guard, setGuard] = useState<GuardState>({ running: false, games: [], applied: [] });
@@ -122,7 +137,7 @@ export default function App() {
       await refreshSync();
       setDialog(null);
       setFirstRun(false);
-      if (r.restored) { setNotice(t("restoredNote")); setTimeout(() => setNotice(""), 9000); }
+      if (r.restored) say(t("restoredNote"));
       return "";
     }
     if (dialog === "password" || needPasswordRef.current) {
@@ -153,7 +168,7 @@ export default function App() {
     setDialog(null);
     return "";
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firstRun, dialog, t, loginError, refreshSync]);
+  }, [firstRun, dialog, t, loginError, refreshSync, say]);
   const toggleSync = useCallback(async (enabled: boolean) => {
     const s = await api.syncConfig({ enabled }).catch(() => null);
     if (s) setSync(s);
@@ -350,7 +365,7 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guard]);
 
-  const changeSetting = useCallback(async (key: "guardAuto" | "background" | "startup", value: boolean) => {
+  const changeSetting = useCallback(async (key: "guardAuto" | "background" | "startup" | "notify" | "sound", value: boolean) => {
     setFwError("");
     setSettingBusy(key);
     const r = await api.settingsSet({ [key]: value }).catch(() => null);
@@ -414,6 +429,40 @@ export default function App() {
     : t("errGeneric");
 
   const best = state.results[0];
+  const scanNet = scanRows[0]?.net ?? null;
+
+  const scopeTitle = p === "idle" ? t("emptyTitle") : p === "elevating" || p === "waiting_game" ? t("launchGame") : p === "ready" ? t("joinMatch") : p === "capturing" ? t("capture") : t("analyze");
+  const scopeText = p === "idle" ? t("emptyText") : p === "elevating" ? t("needAdmin") : p === "waiting_game" ? t("launchGameHint") : p === "ready" ? t("joinMatchHint") : p === "capturing" ? t("captureHint") : t("analyzeHint");
+
+  const copySummary = async () => {
+    const text = summaryText({ game: state.game, time: scanRows[0]?.time ?? "", results: state.results, net: scanNet }, t, profile?.name ?? "");
+    say((await copyText(text)) ? t("copied") : t("copyFail"));
+  };
+  const copyDiagnostics = useCallback(async (): Promise<string> => {
+    const r = await api.diagnostics().catch(() => null);
+    if (!r || !r.ok) return t("copyFail");
+    return (await copyText(r.text)) ? "" : t("copyFail");
+  }, [t]);
+
+  // a Windows notification (and sound, if enabled) while the player is inside the game; nothing when the app is the active window
+  const prevPhase = useRef<Phase>("idle");
+  useEffect(() => {
+    const prev = prevPhase.current;
+    prevPhase.current = state.phase;
+    if (prev === state.phase || document.hasFocus()) return;
+    if (state.phase === "capturing" && (prev === "ready" || prev === "waiting_game")) void api.notify(t("notifyStartTitle"), t("notifyStartText")).catch(() => {});
+    else if (state.phase === "done" && state.results[0]) {
+      const b = state.results[0];
+      const where = b.city && b.city !== "?" ? b.city : b.country;
+      void api.notify(`${t("notifyDoneTitle")} · ${state.game}`, `${where} · ${b.avg != null ? (b.via ? "≈ " : "") + b.avg + " ms" : t("noReply")} · ${verdictLabel(b.verdict, t)}`).catch(() => {});
+    } else if (state.phase === "error" && state.errorCode !== "cancelled") void api.notify(t("notifyErrTitle"), errText).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.phase]);
+
+  // the notification-area icon follows the language of the window
+  useEffect(() => {
+    void api.trayLabels({ open: t("trayOpen"), guardOn: t("trayGuardOn"), guardOff: t("trayGuardOff"), exit: t("trayExit") }).catch(() => {});
+  }, [t]);
 
   const tabs: { id: Tab; label: string; icon: typeof Radar; count?: number }[] = [
     { id: "scan", label: t("tabScan"), icon: Radar },
@@ -423,12 +472,12 @@ export default function App() {
   ];
 
   useEffect(() => {
-    if (profile && !profile.name && !firstRunSeen.current) { firstRunSeen.current = true; setFirstRun(true); }
+    if (profile && !profile.name && !firstRunSeen.current) { firstRunSeen.current = true; setFirstRun(true); setWelcome(true); }
   }, [profile]);
   // an account that shares with the group but has no password yet must choose one (it is how it is logged into from any PC)
   const needPassword = !!profile?.name && !!sync?.configured && !!sync.hasCode && !sync.hasPassword && !firstRun;
   needPasswordRef.current = needPassword;
-  const modalOpen = firstRun || needPassword || dialog !== null || adminOpen;
+  const modalOpen = welcome || firstRun || needPassword || dialog !== null || adminOpen;
   const relogin = !!sync?.hasPassword && (sync.error === "player" || sync.error === "taken");
 
   // what the header chip says when sharing has a problem (the details are in Settings)
@@ -438,22 +487,22 @@ export default function App() {
 
   return (
     <>
-      <div inert={modalOpen} className="mx-auto flex min-h-full w-full max-w-[1480px] flex-col gap-5 p-4 sm:p-6">
-        {/* header */}
-        <header className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+      <div inert={modalOpen} className="mx-auto flex min-h-full w-full max-w-[1480px] flex-col gap-5 px-4 pb-6 sm:px-6">
+        {/* header: the mark, the state of things as quiet chips, and the few controls that are used all the time */}
+        <header className="sticky top-0 z-30 -mx-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border/60 bg-background/85 px-4 py-3 backdrop-blur-md sm:-mx-6 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
             <Logo className="size-10 shrink-0" />
-            <div>
-              <h1 className="text-lg leading-tight font-semibold">GameNetKit</h1>
-              <p className="text-xs text-muted-foreground">
+            <div className="min-w-0">
+              <h1 className="text-lg leading-tight font-extrabold" dir="ltr">GameNetKit</h1>
+              <p className="hide-compact text-xs text-muted-foreground">
                 {t("tagline")}
-                {info && <> · {t("version")} <span className="num">{info.version}</span></>}
+                {info && <> · <span className="num">{info.version}</span></>}
               </p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {profile?.name && (
-              <span className="inline-flex h-8 items-center gap-1.5 px-2 text-xs font-medium text-muted-foreground" title={t("profileFixed")}>
+              <span className="inline-flex h-8 items-center gap-1.5 px-1 text-xs font-semibold text-muted-foreground" title={t("profileFixed")}>
                 <UserRound className="size-4" /> {profile.name}
               </span>
             )}
@@ -465,12 +514,14 @@ export default function App() {
             {relogin && <Button variant="outline" size="sm" onClick={() => setDialog("password")}><LockKeyhole /> {t("loginAgain")}</Button>}
             {guard.running && <Status variant="success" pulse title={t("guardText")}>{t("guardTitle")}</Status>}
             {updPhase === "checking" && <Status variant="info" pulse>{t("checking")}</Status>}
-            {updPhase === "idle" && upd && !upd.error && !upd.hasUpdate && <Status variant="success">{t("upToDate")}</Status>}
             {updPhase === "idle" && upd?.hasUpdate && <Status variant="warning" pulse>{t("updateAvail")} <span className="num">{upd.latest}</span></Status>}
             {updPhase === "idle" && upd?.error && <Status variant="error">{t("updateFail")}</Status>}
-            <Button variant="outline" size="sm" onClick={checkUpdate} disabled={updPhase !== "idle"}>
+            <span className="mx-0.5 hidden h-5 w-px bg-border sm:block" aria-hidden />
+            <Button variant="ghost" size="sm" className="size-8 px-0" onClick={checkUpdate} disabled={updPhase !== "idle"} aria-label={t("checkUpdate")} title={upd && !upd.error && !upd.hasUpdate ? `${t("checkUpdate")} · ${t("upToDate")}` : t("checkUpdate")}>
               <RefreshCw className={cn(updPhase === "checking" && "animate-spin")} />
-              {t("checkUpdate")}
+            </Button>
+            <Button variant="ghost" size="sm" className="size-8 px-0" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? t("themeToLight") : t("themeToDark")} title={theme === "dark" ? t("themeToLight") : t("themeToDark")}>
+              {theme === "dark" ? <Sun /> : <Moon />}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setLang(lang === "ar" ? "en" : "ar")}>
               <Languages />
@@ -485,6 +536,10 @@ export default function App() {
                 sync={sync}
                 onSyncToggle={toggleSync}
                 onChangeCode={() => setDialog("code")}
+                density={density}
+                onDensity={(d) => setDensity(d)}
+                onDiagnostics={copyDiagnostics}
+                onWelcome={() => setWelcome(true)}
               />
             )}
           </div>
@@ -606,7 +661,7 @@ export default function App() {
         {tab === "scan" && (
           <main className="grid flex-1 gap-5 lg:grid-cols-[330px_1fr] xl:grid-cols-[360px_1fr]">
             {/* control + stepper */}
-            <section className="flex flex-col gap-5 self-start rounded-xl border border-border bg-card p-5">
+            <section className="lift flex flex-col gap-5 self-start rounded-2xl border border-border bg-card p-5">
               <div>
                 <div className="mb-2 text-xs font-medium text-muted-foreground">{t("chooseGame")}</div>
                 <div className="grid gap-2">
@@ -661,24 +716,30 @@ export default function App() {
                 </div>
               )}
 
-              <VerticalStepper steps={steps} current={stepCurrent} loading={running && p !== "ready"} done={p === "done"} />
+              <div className="hide-compact"><VerticalStepper steps={steps} current={stepCurrent} loading={running && p !== "ready"} done={p === "done"} /></div>
             </section>
 
-            {/* results */}
+            {/* the stage: the scope while a scan runs, the match server's wire and the other servers when it is done */}
             <section className="flex min-w-0 flex-col gap-4">
               {p === "error" && (
-                <div className="enter rounded-xl border border-destructive/30 bg-destructive/10 p-4">
-                  <div className="text-sm font-medium text-destructive">{t("errorTitle")}</div>
+                <div role="alert" className="enter rounded-2xl border border-destructive/30 bg-destructive/10 p-4">
+                  <div className="text-sm font-semibold text-destructive">{t("errorTitle")}</div>
                   <p className="mt-1 text-sm text-foreground/90">{errText}</p>
                   {state.error && <p className="num mt-1 text-xs text-muted-foreground" dir="ltr">{state.error}</p>}
                 </div>
               )}
 
+              {(p === "idle" || p === "error" || running) && (
+                <div className="enter lift rounded-2xl border border-border bg-card/70 px-4 py-2">
+                  <Scope phase={p === "error" ? "idle" : p} ports={state.ports} secondsLeft={state.secondsLeft} portsText={t("portsSeen")} title={scopeTitle} text={scopeText} game={running ? game : undefined} />
+                </div>
+              )}
+
               {p === "done" && !best && (
-                <div className="enter flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border p-10 text-center">
+                <div className="enter flex flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-border p-10 text-center">
                   <div className="flex size-12 items-center justify-center rounded-full bg-accent text-muted-foreground"><Activity className="size-6" /></div>
                   <div>
-                    <div className="text-sm font-medium">{t("doneEmptyTitle")}</div>
+                    <div className="text-sm font-semibold">{t("doneEmptyTitle")}</div>
                     <p className="mt-1 max-w-sm text-sm text-muted-foreground">{t("errNoData")}</p>
                   </div>
                 </div>
@@ -687,17 +748,19 @@ export default function App() {
               {p === "done" && best && (
                 <>
                   <div className="enter flex flex-wrap items-center justify-between gap-3">
-                    <h2 className="text-base font-semibold">{t("resultsTitle")} · {state.game}</h2>
-                    <Button variant="secondary" size="sm" onClick={() => api.openFolder(state.game).catch(() => setFwError(t("errGeneric")))}>
-                      <FolderOpen /> {t("openFolder")}
-                    </Button>
+                    <h2 className="text-lg font-extrabold">{t("resultsTitle")} · {state.game}</h2>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={copySummary}><Copy /> {t("copySummary")}</Button>
+                      <Button variant="secondary" size="sm" onClick={() => api.openFolder(state.game).catch(() => setFwError(t("errGeneric")))}>
+                        <FolderOpen /> {t("openFolder")}
+                      </Button>
+                    </div>
                   </div>
                   <Suggestions
                     t={t}
                     items={suggestions(rangeStats(scanRows), isRangeBlocked)}
                     onBlock={(s, target) => block(s, state.game, target, true)}
                   />
-                  <VerdictBanner best={best} t={t} />
                   <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
                     {state.results.map((s, i) => (
                       <ResultCard
@@ -705,6 +768,8 @@ export default function App() {
                         s={s}
                         t={t}
                         first={i === 0}
+                        hero={i === 0}
+                        isp={scanNet?.isp}
                         delay={i * 60}
                         blocked={isBlocked(s.ip)}
                         game={state.game}
@@ -716,37 +781,17 @@ export default function App() {
                 </>
               )}
 
-              {(p === "analyzing" || p === "measuring") && (
-                <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3" aria-live="polite">
-                  <ServerCardSkeleton />
-                  <ServerCardSkeleton />
-                </div>
-              )}
-
-              {(p === "idle" || (running && p !== "analyzing" && p !== "measuring")) && (
-                <div className="enter flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border p-10 text-center">
-                  <div className="flex size-12 items-center justify-center rounded-full bg-accent text-muted-foreground">
-                    <Activity className="size-6" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium">{t("emptyTitle")}</div>
-                    <p className="mt-1 max-w-sm text-sm text-muted-foreground">{t("emptyText")}</p>
-                  </div>
-                </div>
-              )}
-
-              <div className="rounded-xl border border-border bg-card p-4">
-                <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+              <div className="hide-compact rounded-2xl border border-border bg-card/60 p-4">
+                <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                   <ShieldCheck className="size-4 text-primary" /> {t("howTitle")}
                 </div>
-                <ul className="space-y-1 text-xs text-muted-foreground">
+                <ul className="space-y-1 text-xs leading-relaxed text-muted-foreground">
                   <li>• {t("how1")}</li>
                   <li>• {t("how2")}</li>
                   <li>• {t("how3")}</li>
                 </ul>
               </div>
-            </section>
-          </main>
+            </section>          </main>
         )}
         </motion.div>
       </div>
@@ -756,7 +801,9 @@ export default function App() {
       )}
 
       {/* first run (no name yet) or "change name": outside the page, which is inert while this is open */}
-      {profile && (firstRun || needPassword || dialog) && (
+      {welcome && <Welcome t={t} rtl={lang === "ar"} onDone={() => setWelcome(false)} />}
+
+      {profile && !welcome && (firstRun || needPassword || dialog) && (
         <ProfileDialog
           key={firstRun ? "first" : needPassword ? "pw-required" : dialog ?? "code"}
           t={t}
@@ -769,26 +816,5 @@ export default function App() {
         />
       )}
     </>
-  );
-}
-
-function verdictKey(v: ServerResult["verdict"]): Key {
-  return v === "good" ? "verdictGood" : v === "ok" ? "verdictOk" : v === "bad" ? "verdictBad" : "verdictNoReply";
-}
-
-function VerdictBanner({ best, t }: { best: ServerResult; t: (k: Key) => string }) {
-  const box =
-    best.verdict === "good" ? "border-success/30 bg-success/10"
-    : best.verdict === "bad" ? "border-destructive/30 bg-destructive/10"
-    : best.verdict === "ok" ? "border-warning/30 bg-warning/10"
-    : "border-border bg-card";
-  return (
-    <div className={cn("enter rounded-xl border p-4", box)}>
-      <div className="text-sm font-medium">{t(verdictKey(best.verdict))}</div>
-      <p className="mt-1 text-xs text-muted-foreground">
-        <span className="num">{best.ip}</span> · {best.country}{best.city && best.city !== "?" ? `, ${best.city}` : ""}
-        {best.avg != null && <> · <span className="num">{best.avg} ms</span></>}
-      </p>
-    </div>
   );
 }
