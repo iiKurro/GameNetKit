@@ -1,4 +1,4 @@
-// Windows Firewall block / unblock for one game-server IP. Runs elevated (UAC) via "GameNetKit.exe --fw block|unblock --ip x".
+﻿// Windows Firewall block / unblock for one game-server IP. Runs elevated (UAC) via "GameNetKit.exe --fw block|unblock --ip x".
 // It only ever touches rules named "GameNetKit block <ip>", only for a validated public IPv4 address.
 using System;
 using System.Collections.Generic;
@@ -14,10 +14,19 @@ namespace GameNetKit
 
         public static string RuleName(string ip) { return Prefix + ip; }
 
+        // A target is a public IPv4 address, or a public range a.b.c.d/16 .. /32 (never anything wider than /16).
         public static bool ValidIp(string s)
         {
+            if (s == null || !Regex.IsMatch(s, @"^\d{1,3}(\.\d{1,3}){3}(/\d{1,2})?$")) return false;
+            string[] parts = s.Split('/');
             IPAddress a;
-            return s != null && Regex.IsMatch(s, @"^\d{1,3}(\.\d{1,3}){3}$") && IPAddress.TryParse(s, out a) && Analyzer.IsPublicIp(s);
+            if (!IPAddress.TryParse(parts[0], out a) || !Analyzer.IsPublicIp(parts[0])) return false;
+            if (parts.Length == 2)
+            {
+                int len = int.Parse(parts[1]);
+                if (len < 16 || len > 32) return false;
+            }
+            return true;
         }
 
         static int Netsh(string args, out string output)
