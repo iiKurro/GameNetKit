@@ -13,6 +13,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace GameNetKit
 {
@@ -55,11 +56,13 @@ namespace GameNetKit
             lock (fileLock) File.WriteAllText(BlocksPath, js.Serialize(list), new UTF8Encoding(false));
         }
 
+        static bool IsGameMode(Dictionary<string, object> b) { return b.ContainsKey("mode") && Convert.ToString(b["mode"]) == "game"; }
+
         // Entries whose firewall rule vanished (deleted by hand) are dropped, so the list always matches reality.
         object Blocks()
         {
             var list = LoadBlocks();
-            var keep = list.Where(b => Demo || Firewall.IsActive((string)b["ip"])).ToList();
+            var keep = list.Where(b => Demo || IsGameMode(b) || Firewall.IsActive((string)b["ip"])).ToList();
             if (keep.Count != list.Count) SaveBlocks(keep);
             return keep;
         }
@@ -79,6 +82,8 @@ namespace GameNetKit
                 e["method"] = kv.Value;
                 result.Add(e);
             }
+            foreach (var b in known)
+                if (IsGameMode(b) && !result.Any(r => (string)r["ip"] == (string)b["ip"])) result.Add(b);
             SaveBlocks(result);
             return result;
         }
@@ -104,6 +109,21 @@ namespace GameNetKit
         {
             string ip = Convert.ToString(body["ip"]);
             if (!Firewall.ValidIp(ip)) return Fail("bad ip");
+            string game = body.ContainsKey("game") ? Convert.ToString(body["game"]) : "";
+            bool whilePlaying = body.ContainsKey("mode") && Convert.ToString(body["mode"]) == "game" && game != "";
+            if (whilePlaying)
+            {
+                // the block only lives while that game runs: the guard (one admin prompt, then silent) switches it on and off
+                if (!GuardRunning()) { string why = StartGuard(); if (why != "") return Fail(why); }
+                var gl = LoadBlocks().Where(b => (string)b["ip"] != ip).ToList();
+                gl.Add(new Dictionary<string, object>
+                {
+                    { "ip", ip }, { "label", body.ContainsKey("label") ? Convert.ToString(body["label"]) : "" }, { "game", game },
+                    { "time", DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) }, { "method", "" }, { "mode", "game" }
+                });
+                SaveBlocks(gl);
+                return Ok();
+            }
             if (!Demo)
             {
                 int rc = RunElevated("--fw block --ip " + ip);
@@ -119,7 +139,7 @@ namespace GameNetKit
                 { "label", body.ContainsKey("label") ? Convert.ToString(body["label"]) : "" },
                 { "game", body.ContainsKey("game") ? Convert.ToString(body["game"]) : "" },
                 { "time", DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) },
-                { "method", method }
+                { "method", method }, { "mode", "always" }
             });
             SaveBlocks(list);
             return Ok();
@@ -129,6 +149,18 @@ namespace GameNetKit
         {
             string ip = Convert.ToString(body["ip"]);
             if (!Firewall.ValidIp(ip)) return Fail("bad ip");
+            var entry = LoadBlocks().FirstOrDefault(b => (string)b["ip"] == ip);
+            if (entry != null && IsGameMode(entry))
+            {
+                // the guard removes an applied block by itself within 2 s; with no guard running only a leftover needs an admin prompt
+                SaveBlocks(LoadBlocks().Where(b => (string)b["ip"] != ip).ToList());
+                if (!Demo && !GuardRunning() && Firewall.IsActive(ip))
+                {
+                    int rc0 = RunElevated("--fw unblock --ip " + ip);
+                    if (rc0 == -1) return Fail("uac");
+                }
+                return Ok();
+            }
             if (!Demo)
             {
                 int rc = RunElevated("--fw unblock --ip " + ip);
@@ -138,6 +170,61 @@ namespace GameNetKit
             SaveBlocks(LoadBlocks().Where(b => (string)b["ip"] != ip).ToList());
             return Ok();
         }
+
+        // ------------------------------------------------------------------ guard (elevated background watcher)
+        object GuardState()
+        {
+            var st = new Dictionary<string, object> { { "running", false }, { "games", new object[0] }, { "applied", new object[0] } };
+            try
+            {
+                if (!File.Exists(Guard.StatePath)) return st;
+                var g = (Dictionary<string, object>)js.DeserializeObject(File.ReadAllText(Guard.StatePath));
+                DateTime t = DateTime.ParseExact(Convert.ToString(g["time"]), "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                bool fresh = (DateTime.Now - t).TotalSeconds < 9;
+                bool alive = false;
+                try { using (Process.GetProcessById(Convert.ToInt32(g["pid"]))) alive = true; } catch { }
+                st["running"] = fresh && alive;
+                st["games"] = g["running"];
+                st["applied"] = g["applied"];
+                st["error"] = g.ContainsKey("error") ? g["error"] : "";
+            }
+            catch { }
+            return st;
+        }
+
+        bool GuardRunning() { return (bool)((Dictionary<string, object>)GuardState())["running"]; }
+
+        // starts the guard (UAC prompt, no waiting for it to end). "" = running, otherwise an error code.
+        string StartGuard()
+        {
+            try
+            {
+                try { File.Delete(Guard.StopPath); } catch { }
+                var psi = new ProcessStartInfo(exePath, "--guard 1" + (Demo ? " --demo 1" : "")) { UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden };
+                if (!Demo) psi.Verb = "runas";
+                Process.Start(psi);
+            }
+            catch (Win32Exception) { return "uac"; }
+            catch { return "guard"; }
+            for (int i = 0; i < 40; i++) { if (GuardRunning()) return ""; Thread.Sleep(250); }
+            return "guard";
+        }
+
+        void StopGuard()
+        {
+            if (!GuardRunning()) return;
+            try { File.WriteAllText(Guard.StopPath, "1"); } catch { }
+            for (int i = 0; i < 24 && GuardRunning(); i++) Thread.Sleep(250);
+        }
+
+        object GuardStart()
+        {
+            if (GuardRunning()) return Ok();
+            string why = StartGuard();
+            return why == "" ? Ok() : Fail(why);
+        }
+
+        object GuardStop() { StopGuard(); return Ok(); }
 
         // One admin prompt removes every rule this app ever created.
         object UnblockAll()
