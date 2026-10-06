@@ -17,8 +17,8 @@ export function ServerCard({ className, highlight, ...props }: React.ComponentPr
     <div
       data-slot="server-card"
       className={cn(
-        "flex flex-col gap-4 rounded-xl border bg-card p-5 text-card-foreground",
-        highlight ? "border-primary/50 shadow-[0_0_0_1px_rgba(53,208,127,.15)]" : "border-border",
+        "flex flex-col gap-4 rounded-2xl border bg-card p-5 text-card-foreground",
+        highlight ? "border-primary/45" : "border-border",
         className,
       )}
       {...props}
