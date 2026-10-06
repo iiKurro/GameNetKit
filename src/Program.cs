@@ -1,4 +1,4 @@
-// GameNetKit - UI host. Serves the embedded web UI on 127.0.0.1 and opens it in an app-style window (Edge).
+﻿// GameNetKit - UI host. Serves the embedded web UI on 127.0.0.1 and opens it in an app-style window (Edge).
 // Everything that needs admin runs in a separate worker process started on demand (UAC prompt). C# 5 / .NET Framework 4.
 using System;
 using System.Collections.Generic;
@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.4.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "0.4.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
