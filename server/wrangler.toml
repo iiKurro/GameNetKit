@@ -1,0 +1,9 @@
+name = "gamenetkit"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# the database id is filled in by the setup script after "wrangler d1 create"
+[[d1_databases]]
+binding = "DB"
+database_name = "gamenetkit"
+database_id = "231fe024-8104-4f23-a420-09cb1682deaf"
