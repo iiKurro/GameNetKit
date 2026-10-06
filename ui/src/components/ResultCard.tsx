@@ -5,7 +5,9 @@ import type { Key } from "@/i18n";
 import { rangeOf } from "@/lib/cidr";
 import { Flag } from "@/lib/flags";
 import { isV6 } from "@/lib/stats";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { LinkStrip } from "@/components/LinkStrip";
 import { Status } from "@/components/ui/status";
 import {
   ServerCard,
@@ -38,9 +40,15 @@ interface Props {
   /** target = the IP, or a range like 34.165.0.0/16; whilePlaying = switched on only while the game runs */
   onBlock: (target: string, whilePlaying: boolean) => Promise<void>;
   onUnblock: () => Promise<void>;
+  /** the match server of a scan: wider, with the wire drawn between you and the server */
+  hero?: boolean;
+  /** my internet provider (shown under "you" on the wire) */
+  isp?: string;
 }
 
-export function ResultCard({ s, t, first, delay = 0, blocked, game, onBlock, onUnblock }: Props) {
+const verdictSentence = (v: ServerResult["verdict"]): Key => (v === "good" ? "verdictGood" : v === "ok" ? "verdictOk" : v === "bad" ? "verdictBad" : "verdictNoReply");
+
+export function ResultCard({ s, t, first, delay = 0, blocked, game, onBlock, onUnblock, hero, isp }: Props) {
   const [confirm, setConfirm] = useState(false);
   const [whilePlaying, setWhilePlaying] = useState(true);
   const wp = !!game && whilePlaying;
@@ -58,7 +66,7 @@ export function ResultCard({ s, t, first, delay = 0, blocked, game, onBlock, onU
   };
 
   return (
-    <ServerCard highlight={first} className="enter" style={{ animationDelay: `${delay}ms` }}>
+    <ServerCard highlight={first} className={cn("enter lift transition-colors hover:border-primary/40", hero && "gap-5 p-6 md:col-span-2 2xl:col-span-3")} style={{ animationDelay: `${delay}ms` }}>
       <ServerCardHeader>
         <ServerCardTitle
           region={<span className="inline-flex items-center gap-1.5"><Flag country={s.country} cc={s.cc} />{locationOf(s)}</span>}
@@ -68,32 +76,58 @@ export function ResultCard({ s, t, first, delay = 0, blocked, game, onBlock, onU
         <ServerCardStatus status={s.verdict}>{verdictLabel(s.verdict, t)}</ServerCardStatus>
       </ServerCardHeader>
 
+      {hero && (
+        <>
+          <LinkStrip
+            avg={s.avg}
+            jitter={s.jitter}
+            loss={s.loss}
+            verdict={s.verdict}
+            approx={!!s.via}
+            youLabel={t("you")}
+            youNote={isp}
+            server={<Flag country={s.country} cc={s.cc} />}
+            serverNote={s.city && s.city !== "?" ? s.city : s.country}
+            className="py-2"
+          />
+          <p className="mx-auto max-w-xl text-center text-base leading-relaxed font-medium text-pretty">{t(verdictSentence(s.verdict))}</p>
+        </>
+      )}
+
       {(first || blocked) && (
-        <div className="flex flex-wrap gap-2">
+        <div className={cn("flex flex-wrap gap-2", hero && "justify-center")}>
           {first && <Status variant="success">{t("matchServer")}</Status>}
           {blocked && <Status variant="error">{t("blocked")}</Status>}
         </div>
       )}
 
-      <ServerCardSpecs>
-        <ServerCardSpec label={t("packets")}>{s.packets}</ServerCardSpec>
-        <ServerCardSpec label={t("port")}>{s.port}</ServerCardSpec>
-        <ServerCardSpec label="KB">{s.kb}</ServerCardSpec>
-      </ServerCardSpecs>
+      {!hero && (
+        <ServerCardSpecs>
+          <ServerCardSpec label={t("packets")}>{s.packets}</ServerCardSpec>
+          <ServerCardSpec label={t("port")}>{s.port}</ServerCardSpec>
+          <ServerCardSpec label="KB">{s.kb}</ServerCardSpec>
+        </ServerCardSpecs>
+      )}
 
       {s.avg == null ? (
         <p className="text-xs leading-relaxed text-muted-foreground">{t("noReplyHint")}</p>
       ) : (
-        <div className="grid gap-3">
+        <div className={cn("grid gap-3", hero && "sm:grid-cols-3 sm:gap-6")}>
           <ServerCardMeter label={t("ping")} value={s.avg} display={`${s.avg} ms`} max={200} thresholds={[60, 100]} />
           <ServerCardMeter label={t("jitter")} value={s.jitter ?? 0} display={`${s.jitter ?? 0} ms`} max={40} thresholds={[8, 15]} />
           <ServerCardMeter label={t("loss")} value={s.loss} display={`${s.loss}%`} max={10} thresholds={[1, 3]} />
           {s.via && (
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
+            <p className={cn("text-[11px] leading-relaxed text-muted-foreground", hero && "sm:col-span-3")}>
               {t("viaNote")} <span className="num">{s.via.replace(":", " · ")}</span>
             </p>
           )}
         </div>
+      )}
+
+      {hero && (
+        <p className="num text-center text-xs text-muted-foreground">
+          {s.packets} {t("packets")} · {t("port")} {s.port} · {s.kb} KB
+        </p>
       )}
 
       <div className="mt-auto flex flex-col gap-2 border-t border-border pt-3">
