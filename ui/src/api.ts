@@ -42,6 +42,8 @@ export interface BlockEntry {
   label: string;
   game: string;
   time: string;
+  /** how it is blocked: a firewall rule, or a network route when the firewall refuses rules */
+  method?: "firewall" | "route";
 }
 
 export interface RunSummary {
