@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.9.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "0.9.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -161,11 +161,14 @@ namespace GameNetKit
             {
                 if (!created)
                 {
-                    // another instance is running: just bring up its window
+                    // the app is already running: show its window instead of starting anything (a new window only if it has none)
                     try
                     {
-                        string[] pf = File.ReadAllText(Path.Combine(Program.DataDir, "port.txt")).Split('|');
-                        OpenWindow("http://127.0.0.1:" + pf[0] + "/?t=" + pf[1]);
+                        if (!FocusExistingWindow())
+                        {
+                            string[] pf = File.ReadAllText(Path.Combine(Program.DataDir, "port.txt")).Split('|');
+                            OpenWindow("http://127.0.0.1:" + pf[0] + "/?t=" + pf[1]);
+                        }
                     }
                     catch { }
                     return 0;
