@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Cloud, KeyRound, MonitorUp, Moon, Settings2, ShieldCheck } from "lucide-react";
+import { Cloud, KeyRound, LoaderCircle, MonitorUp, Moon, Settings2, ShieldCheck, Trash2 } from "lucide-react";
 import type { Settings, SyncState } from "@/api";
 import type { Key } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -19,11 +19,29 @@ interface Props {
   sync: SyncState | null;
   onSyncToggle: (enabled: boolean) => void;
   onChangeCode: () => void;
+  /** deletes my scans from the group server; resolves to "" when done, otherwise a message */
+  onDeleteMine: () => Promise<string>;
 }
 
 /** Start-up choices, kept in one small panel in the header so they are one click away but never in the way. */
-export function SettingsPopover({ t, settings, busyKey, onChange, sync, onSyncToggle, onChangeCode }: Props) {
+export function SettingsPopover({ t, settings, busyKey, onChange, sync, onSyncToggle, onChangeCode, onDeleteMine }: Props) {
   const [open, setOpen] = useState(false);
+  // "delete my scans from the server": two clicks, and it says what happened
+  const [delStep, setDelStep] = useState<"idle" | "confirm" | "busy">("idle");
+  const [delMsg, setDelMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    if (delStep !== "confirm") return;
+    const id = setTimeout(() => setDelStep("idle"), 5000);
+    return () => clearTimeout(id);
+  }, [delStep]);
+  const deleteMine = async () => {
+    if (delStep === "idle") { setDelMsg(null); setDelStep("confirm"); return; }
+    if (delStep !== "confirm") return;
+    setDelStep("busy");
+    const err = await onDeleteMine();
+    setDelMsg(err ? { ok: false, text: err } : { ok: true, text: t("syncDelDone") });
+    setDelStep("idle");
+  };
   const wrap = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const reduce = useReducedMotion();
@@ -84,9 +102,18 @@ export function SettingsPopover({ t, settings, busyKey, onChange, sync, onSyncTo
                         </>
                       )}
                   </p>
-                  <Button className="mt-2" variant="outline" size="sm" onClick={() => { setOpen(false); onChangeCode(); }}>
-                    <KeyRound /> {sync.hasCode ? t("syncChangeCode") : t("syncEnterCode")}
-                  </Button>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={() => { setOpen(false); onChangeCode(); }}>
+                      <KeyRound /> {sync.hasCode ? t("syncChangeCode") : t("syncEnterCode")}
+                    </Button>
+                    {sync.hasCode && (
+                      <Button variant={delStep === "confirm" ? "destructive" : "ghost"} size="sm" disabled={delStep === "busy"} onClick={deleteMine}>
+                        {delStep === "busy" ? <LoaderCircle className="animate-spin" /> : <Trash2 />} {delStep === "confirm" ? t("syncDelConfirm") : t("syncDelBtn")}
+                      </Button>
+                    )}
+                  </div>
+                  {delStep === "confirm" && <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{t("syncDelHint")}</p>}
+                  {delMsg && <p role="status" className={cn("mt-2 text-xs", delMsg.ok ? "text-success" : "text-destructive")}>{delMsg.text}</p>}
                 </div>
                 <Switch
                   checked={sync.enabled}
