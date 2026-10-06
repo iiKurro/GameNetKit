@@ -46,6 +46,16 @@ export interface BlockEntry {
   time: string;
   /** how it is blocked: a firewall rule, or a network route when the firewall refuses rules */
   method?: "firewall" | "route";
+  /** "game": active only while that game runs (the guard switches it); default "always" */
+  mode?: "always" | "game";
+}
+
+export interface GuardState {
+  running: boolean;
+  /** games running right now */
+  games: string[];
+  /** targets the guard has switched on right now */
+  applied: string[];
 }
 
 export interface RunSummary {
@@ -106,7 +116,11 @@ export const api = {
   applyUpdate: () => call<{ ok: boolean; error?: string }>("/api/update/apply", {}),
   heartbeat: () => call<{ ok: boolean }>("/api/heartbeat", {}),
   blocks: () => call<BlockEntry[]>("/api/blocks"),
-  block: (ip: string, label: string, game: string) => call<{ ok: boolean; error?: string; detail?: string }>("/api/block", { ip, label, game }),
+  block: (ip: string, label: string, game: string, mode: "always" | "game" = "always") =>
+    call<{ ok: boolean; error?: string; detail?: string }>("/api/block", { ip, label, game, mode }),
+  guard: () => call<GuardState>("/api/guard"),
+  guardStart: () => call<{ ok: boolean; error?: string }>("/api/guard/start", {}),
+  guardStop: () => call<{ ok: boolean }>("/api/guard/stop", {}),
   unblock: (ip: string) => call<{ ok: boolean; error?: string; detail?: string }>("/api/unblock", { ip }),
   // history is always per game: scans of different games are never mixed
   history: (game: string) => call<RunSummary[]>("/api/history", { game }),
