@@ -1,7 +1,9 @@
 // The guard: an elevated background process (started once, one UAC prompt) that applies a game's blocks while that game
 // is running and removes them when it is closed. Blocks marked "always" are not its business.
 //   GameNetKit.exe --guard            started by the UI; stops when guard-stop.flag appears (or on reboot / logoff)
-// State is exchanged through files in the data folder: blocks.json (read), guard.json (written every 2 s).
+// State is exchanged through files in the data folder: blocks.json (read), guard.json (written every 2 s by its own thread, so a slow
+// firewall command never makes the window think the guard is gone) and guard-applied.json (what the guard has switched on, so a guard
+// that was killed or lost to a logoff can clean up after itself the next time it starts).
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -15,12 +17,19 @@ namespace GameNetKit
 {
     public static class GameList
     {
-        // games.json next to the exe, or the built-in list when there is none
-        public static List<Dictionary<string, object>> Load(string exeDir, JavaScriptSerializer js)
+        // games.json next to the exe, or the built-in list when there is none. The window mirrors it into the data folder, which is
+        // where the guard (running from another folder) reads it, so a game added by hand is seen by both.
+        public static List<Dictionary<string, object>> Load(string exeDir, JavaScriptSerializer js, bool forGuard)
         {
             try
             {
                 string p = Path.Combine(exeDir, "games.json");
+                string mirror = Path.Combine(Program.DataDir, "games.json");
+                if (forGuard) { if (File.Exists(mirror)) p = mirror; }
+                else if (File.Exists(p))
+                {
+                    try { if (!File.Exists(mirror) || File.ReadAllText(mirror) != File.ReadAllText(p)) { Directory.CreateDirectory(Program.DataDir); File.Copy(p, mirror, true); } } catch { }
+                }
                 if (File.Exists(p))
                     return ((object[])js.DeserializeObject(File.ReadAllText(p))).Select(o => (Dictionary<string, object>)o).ToList();
             }
@@ -66,6 +75,7 @@ namespace GameNetKit
         public static string StatePath { get { return Path.Combine(Program.DataDir, "guard.json"); } }
         public static string StopPath { get { return Path.Combine(Program.DataDir, "guard-stop.flag"); } }
         static string BlocksPath { get { return Path.Combine(Program.DataDir, Program.DemoMode ? "blocks-demo.json" : "blocks.json"); } }
+        static string AppliedPath { get { return Path.Combine(Program.DataDir, Program.DemoMode ? "guard-applied-demo.json" : "guard-applied.json"); } }
 
         static readonly JavaScriptSerializer Js = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
 
@@ -74,38 +84,87 @@ namespace GameNetKit
             try { File.AppendAllText(Path.Combine(Program.DataDir, "guard-log.txt"), DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + line + Environment.NewLine); } catch { }
         }
 
-        // the "game" mode blocks: target -> game name
+        // every entry of blocks.json: target -> mode ("game" / "always")
+        static Dictionary<string, string> lastGoodModes = new Dictionary<string, string>();
+        // the "game" mode blocks: target -> game name. null = the file could not be read (the caller keeps what it had)
         static Dictionary<string, string> GameBlocks()
         {
-            var d = new Dictionary<string, string>();
             for (int i = 0; i < 3; i++)
             {
                 try
                 {
-                    if (!File.Exists(BlocksPath)) return d;
-                    foreach (object o in (object[])Js.DeserializeObject(File.ReadAllText(BlocksPath)))
-                    {
-                        var b = (Dictionary<string, object>)o;
-                        if (b.ContainsKey("mode") && Convert.ToString(b["mode"]) == "game" && Firewall.ValidIp(Convert.ToString(b["ip"])))
-                            d[Convert.ToString(b["ip"])] = b.ContainsKey("game") ? Convert.ToString(b["game"]) : "";
-                    }
+                    var d = new Dictionary<string, string>();
+                    var modes = new Dictionary<string, string>();
+                    if (File.Exists(BlocksPath))
+                        foreach (object o in (object[])Js.DeserializeObject(File.ReadAllText(BlocksPath)))
+                        {
+                            var b = (Dictionary<string, object>)o;
+                            string ip = Convert.ToString(b["ip"]);
+                            string mode = b.ContainsKey("mode") ? Convert.ToString(b["mode"]) : "always";
+                            modes[ip] = mode;
+                            if (mode == "game" && Firewall.ValidIp(ip)) d[ip] = b.ContainsKey("game") ? Convert.ToString(b["game"]) : "";
+                        }
+                    lastGoodModes = modes;
                     return d;
                 }
-                catch { Thread.Sleep(50); }   // the UI may be writing the file right now
+                catch { Thread.Sleep(80); }   // the UI may be writing the file right now
             }
-            return d;
+            return null;
         }
 
-        static void WriteState(List<string> running, List<string> applied, string error)
+        // ---- state shared with the heartbeat thread
+        static readonly object stLock = new object();
+        static List<string> stRunning = new List<string>(), stApplied = new List<string>();
+        static string stError = "";
+        static volatile bool stopHeart;
+
+        static void SetState(List<string> running, IEnumerable<string> applied, string error)
         {
-            var st = new Dictionary<string, object>
-            {
-                { "pid", Process.GetCurrentProcess().Id },
-                { "time", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) },
-                { "running", running }, { "applied", applied }, { "error", error }, { "version", Program.Version }
-            };
+            lock (stLock) { stRunning = running; stApplied = applied.ToList(); stError = error; }
+        }
+
+        static void WriteState()
+        {
+            Dictionary<string, object> st;
+            lock (stLock)
+                st = new Dictionary<string, object>
+                {
+                    { "pid", Process.GetCurrentProcess().Id },
+                    { "time", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) },
+                    { "running", stRunning }, { "applied", stApplied }, { "error", stError }, { "version", Program.Version }
+                };
             string tmp = StatePath + ".tmp";
             try { File.WriteAllText(tmp, Js.Serialize(st), new UTF8Encoding(false)); File.Copy(tmp, StatePath, true); } catch { }
+        }
+
+        static void SaveApplied(IEnumerable<string> applied)
+        {
+            try { File.WriteAllText(AppliedPath, Js.Serialize(applied.ToList()), new UTF8Encoding(false)); } catch { }
+        }
+
+        // what a guard that died (killed, logoff, crash) left switched on
+        static void CleanLeftovers()
+        {
+            if (Program.DemoMode) return;
+            var gb = GameBlocks();
+            var cleared = new HashSet<string>();
+            try
+            {
+                if (File.Exists(AppliedPath))
+                    foreach (object o in (object[])Js.DeserializeObject(File.ReadAllText(AppliedPath)))
+                    {
+                        string t = Convert.ToString(o);
+                        string mode;
+                        // a target the user turned into an "always" block meanwhile is theirs now: leave it alone
+                        if (!Firewall.ValidIp(t) || (lastGoodModes.TryGetValue(t, out mode) && mode == "always")) continue;
+                        Firewall.Remove(t); cleared.Add(t); Log("cleared leftover " + t + " (from the previous guard)");
+                    }
+            }
+            catch (Exception e) { Log("could not read guard-applied.json: " + e.Message); }
+            if (gb != null)
+                foreach (var kv in Firewall.ListTargets())
+                    if (gb.ContainsKey(kv.Key) && cleared.Add(kv.Key)) { Firewall.Remove(kv.Key); Log("cleared leftover " + kv.Key); }
+            SaveApplied(new string[0]);
         }
 
         public static int Run()
@@ -121,46 +180,58 @@ namespace GameNetKit
                 var retryAt = new Dictionary<string, DateTime>();
                 string error = "";
                 Log("guard started (demo=" + Program.DemoMode + ")");
+                CleanLeftovers();
 
-                // a guard that died while a block was applied may have left it behind: clear game-mode targets first
-                if (!Program.DemoMode)
-                {
-                    var gb0 = GameBlocks();
-                    foreach (var kv in Firewall.ListTargets())
-                        if (gb0.ContainsKey(kv.Key)) { Firewall.Remove(kv.Key); Log("cleared leftover " + kv.Key); }
-                }
+                // its own thread: firewall commands can take half a minute, and the window must keep seeing a living guard meanwhile
+                var heart = new Thread(() => { while (!stopHeart) { WriteState(); for (int i = 0; i < 20 && !stopHeart; i++) Thread.Sleep(100); } }) { IsBackground = true };
+                SetState(new List<string>(), applied, error);
+                heart.Start();
 
+                var blocks = new Dictionary<string, string>();
                 while (!File.Exists(StopPath))
                 {
-                    var games = GameList.Load(exeDir, Js);
-                    var running = new List<string>();
-                    foreach (var g in games)
-                        if (GameList.IsRunning(Convert.ToString(g["process"]))) running.Add(Convert.ToString(g["name"]));
-
-                    var blocks = GameBlocks();
-                    var desired = new HashSet<string>(blocks.Where(kv => running.Contains(kv.Value)).Select(kv => kv.Key));
-
-                    foreach (string t in desired.Where(x => !applied.Contains(x)).ToList())
+                    try
                     {
-                        DateTime when;
-                        if (retryAt.TryGetValue(t, out when) && DateTime.Now < when) continue;
-                        int rc = Program.DemoMode ? 0 : Firewall.Apply(t, true);
-                        Log("apply " + t + " (" + blocks[t] + ") rc=" + rc);
-                        if (rc == 0) { applied.Add(t); retryAt.Remove(t); error = ""; }
-                        else { retryAt[t] = DateTime.Now.AddSeconds(30); error = "could not block " + t; }
-                    }
-                    foreach (string t in applied.Where(x => !desired.Contains(x)).ToList())
-                    {
-                        if (!Program.DemoMode) Firewall.Remove(t);
-                        applied.Remove(t);
-                        Log("removed " + t);
-                    }
+                        var games = GameList.Load(exeDir, Js, true);
+                        var running = new List<string>();
+                        foreach (var g in games)
+                            if (GameList.IsRunning(Convert.ToString(g["process"]))) running.Add(Convert.ToString(g["name"]));
 
-                    WriteState(running, applied.ToList(), error);
+                        var fresh = GameBlocks();
+                        if (fresh != null) blocks = fresh;   // unreadable file: keep the last good list instead of dropping every block mid-match
+                        var desired = new HashSet<string>(blocks.Where(kv => running.Contains(kv.Value)).Select(kv => kv.Key));
+
+                        foreach (string t in desired.Where(x => !applied.Contains(x)).ToList())
+                        {
+                            DateTime when;
+                            if (retryAt.TryGetValue(t, out when) && DateTime.Now < when) continue;
+                            int rc = Program.DemoMode ? 0 : Firewall.Apply(t, true);
+                            Log("apply " + t + " (" + blocks[t] + ") rc=" + rc);
+                            if (rc == 0) { applied.Add(t); retryAt.Remove(t); error = ""; SaveApplied(applied); }
+                            else { retryAt[t] = DateTime.Now.AddSeconds(30); error = "could not block " + t; }
+                        }
+                        foreach (string t in applied.Where(x => !desired.Contains(x)).ToList())
+                        {
+                            if (!Program.DemoMode) Firewall.Remove(t);
+                            applied.Remove(t);
+                            SaveApplied(applied);
+                            Log("removed " + t);
+                        }
+                        SetState(running, applied, error);
+                    }
+                    catch (Exception e)
+                    {
+                        // a bad games.json, a process that vanished while being listed ...: never let it kill the guard (and leave blocks behind)
+                        error = "guard hiccup: " + e.Message;
+                        Log("loop error: " + e);
+                        SetState(new List<string>(), applied, error);
+                    }
                     for (int i = 0; i < 4 && !File.Exists(StopPath); i++) Thread.Sleep(500);
                 }
 
                 foreach (string t in applied.ToList()) { if (!Program.DemoMode) Firewall.Remove(t); Log("removed " + t + " (guard stopped)"); }
+                SaveApplied(new string[0]);
+                stopHeart = true; heart.Join(1500);
                 try { File.Delete(StatePath); } catch { }
                 Log("guard stopped");
             }
