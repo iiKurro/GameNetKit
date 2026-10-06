@@ -65,6 +65,8 @@ namespace GameNetKit
         {
             var s = ReadSettings();
             s["taskInstalled"] = TaskInstalled();
+            // listed in Task Manager > Startup apps, and switched off there by the user?
+            s["startupDisabled"] = !Demo && TaskInstalled() && StartupEntry.DisabledByUser();
             return s;
         }
 
@@ -107,6 +109,7 @@ namespace GameNetKit
             if (rc == -1) return Fail("uac");
             if (rc != 0) return FwFail("startup", FwWhy(rc));
             if (on && !TaskInstalled()) return FwFail("startup", "the task was not created");
+            if (on) StartupEntry.Ensure(); else StartupEntry.Remove();
             Remember("startup", on);
             if (on) { Remember("background", true); Remember("guardAuto", true); }
             return Ok();
@@ -119,6 +122,7 @@ namespace GameNetKit
             int rc = RunElevated("--install-guard 1 --user \"" + Environment.UserDomainName + "\\" + Environment.UserName + "\"");
             if (rc == -1) return Fail("uac");
             if (rc != 0) return FwFail("startup", FwWhy(rc));
+            StartupEntry.Ensure();
             return Ok();
         }
     }
