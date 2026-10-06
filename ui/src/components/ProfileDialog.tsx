@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { KeyRound, LoaderCircle, UserRound } from "lucide-react";
+import { Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, UserRound } from "lucide-react";
 import type { Profile } from "@/api";
 import type { Key } from "@/i18n";
 import { Button } from "@/components/ui/button";
@@ -9,24 +9,27 @@ type T = (k: Key) => string;
 interface Props {
   t: T;
   profile: Profile;
-  /** "name": only the name; "code": only the group code; "both": first run */
-  mode: "name" | "code" | "both";
-  /** first run: there is no name yet, so the dialog cannot be dismissed */
+  /** "both": first run (name, group code, password); "code": only the group code; "password": only the account password */
+  mode: "both" | "code" | "password";
+  /** the dialog cannot be dismissed (first run, or an account that still has no password) */
   required: boolean;
-  /** the app has a group server; without one the code field is not shown at all */
+  /** the app has a group server; without one the code and password fields are not shown at all */
   syncConfigured: boolean;
   /** resolves to "" when saved, otherwise a message to show (the dialog stays open) */
-  onSave: (name: string, code: string) => Promise<string>;
+  onSave: (name: string, code: string, password: string) => Promise<string>;
   onClose: () => void;
 }
 
 const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [href], select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function ProfileDialog({ t, profile, mode, required, syncConfigured, onSave, onClose }: Props) {
-  const showName = mode !== "code";
-  const showCode = syncConfigured && mode !== "name";
+  const showName = mode === "both";
+  const showCode = syncConfigured && mode !== "password";
+  const showPassword = syncConfigured && mode !== "code";
   const [name, setName] = useState(profile.name || profile.suggested || "");
   const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
   const first = useRef<HTMLInputElement>(null);
@@ -56,19 +59,26 @@ export function ProfileDialog({ t, profile, mode, required, syncConfigured, onSa
     return () => window.removeEventListener("keydown", onKey);
   }, [required, onClose]);
 
-  const canSave = (showName ? name.trim() !== "" : true) && (mode === "code" ? code.trim() !== "" : true);
+  // a password is needed whenever the account is shared (a group code is typed, or the dialog is the password one)
+  const passwordNeeded = showPassword && (mode === "password" || code.trim() !== "");
+  const canSave =
+    (showName ? name.trim() !== "" : true) &&
+    (mode === "code" ? code.trim() !== "" : true) &&
+    (passwordNeeded ? password.length >= 6 : true);
 
   const save = async () => {
     if (!canSave || busy) return;
     setBusy(true);
     setProblem("");
-    try { setProblem(await onSave(showName ? name.trim() : profile.name, showCode ? code.trim() : "")); }
+    try { setProblem(await onSave(showName ? name.trim() : profile.name, showCode ? code.trim() : "", showPassword ? password : "")); }
     catch { setProblem(t("errSaveCode")); }
     finally { setBusy(false); }
   };
 
-  const Icon = showName ? UserRound : KeyRound;
-  const title = showName ? t("profileTitle") : t("codeDialogTitle");
+  const Icon = mode === "password" ? LockKeyhole : showName ? UserRound : KeyRound;
+  const title = mode === "password" ? t("passwordTitle") : showName ? t("profileTitle") : t("codeDialogTitle");
+
+  const inputCls = "h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/60";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" role="dialog" aria-modal="true" aria-labelledby="profile-title">
@@ -89,8 +99,9 @@ export function ProfileDialog({ t, profile, mode, required, syncConfigured, onSa
               maxLength={24}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+              className={inputCls}
             />
+            <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">{t("nameOnce")}</p>
           </>
         )}
 
@@ -107,9 +118,40 @@ export function ProfileDialog({ t, profile, mode, required, syncConfigured, onSa
               spellCheck={false}
               onChange={(e) => setCode(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
-              className="num h-10 w-full rounded-lg border border-border bg-background px-3 text-sm tracking-wide outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+              className={"num tracking-wide " + inputCls}
             />
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{t("groupCodeHint")} {mode === "both" && t("groupCodeSkip")}</p>
+          </div>
+        )}
+
+        {showPassword && (
+          <div className={showName || showCode ? "mt-5" : ""}>
+            {mode === "password" && <p className="mb-3 text-xs leading-relaxed text-muted-foreground">{t("passwordIntro")}</p>}
+            <label className="mb-1.5 block text-xs font-medium text-muted-foreground" htmlFor="account-password">{t("password")}</label>
+            <div className="relative">
+              <input
+                id="account-password"
+                ref={showName || showCode ? undefined : first}
+                type={reveal ? "text" : "password"}
+                value={password}
+                maxLength={100}
+                dir="ltr"
+                autoComplete="new-password"
+                spellCheck={false}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
+                className={"num pe-10 " + inputCls}
+              />
+              <button
+                type="button"
+                onClick={() => setReveal((r) => !r)}
+                aria-label={t(reveal ? "passwordHide" : "passwordShow")}
+                className="absolute end-1 top-1 flex size-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                {reveal ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </button>
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{t("passwordHint")}</p>
           </div>
         )}
 
