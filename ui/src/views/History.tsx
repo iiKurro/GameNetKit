@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, History as HistoryIcon, Trash2 } from "lucide-react";
+﻿import { useCallback, useEffect, useState } from "react";
+import { ChevronDown, ChevronUp, Download, History as HistoryIcon, Trash2 } from "lucide-react";
 import { api, type Run, type RunSummary, type ServerResult } from "@/api";
 import type { Key } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -15,18 +15,24 @@ const verdictVariant: Record<ServerResult["verdict"], StatusVariant> = {
 
 interface Props {
   t: T;
-  blockedIps: Set<string>;
-  onBlock: (s: ServerResult, game: string) => Promise<void>;
+  isBlocked: (ip: string) => boolean;
+  onBlock: (s: ServerResult, game: string, target: string) => Promise<void>;
   onUnblock: (ip: string) => Promise<void>;
   onChanged: (count: number) => void;
 }
 
-export function HistoryView({ t, blockedIps, onBlock, onUnblock, onChanged }: Props) {
+export function HistoryView({ t, isBlocked, onBlock, onUnblock, onChanged }: Props) {
   const [rows, setRows] = useState<RunSummary[] | null>(null);
   const [open, setOpen] = useState<string>("");
   const [run, setRun] = useState<Run | null>(null);
   const [confirmId, setConfirmId] = useState("");
   const [confirmAll, setConfirmAll] = useState(false);
+  const [exported, setExported] = useState("");
+
+  const exportAll = async () => {
+    const r = await api.historyExport().catch(() => null);
+    if (r?.ok) { setExported(r.path); setTimeout(() => setExported(""), 8000); }
+  };
 
   const load = useCallback(async () => {
     const r = await api.history().catch(() => [] as RunSummary[]);
@@ -82,10 +88,21 @@ export function HistoryView({ t, blockedIps, onBlock, onUnblock, onChanged }: Pr
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold">{t("historyTitle")} <span className="num text-sm font-normal text-muted-foreground">({rows.length})</span></h2>
-        <Button variant={confirmAll ? "destructive" : "ghost"} size="sm" onClick={clear}>
-          <Trash2 /> {confirmAll ? t("confirmClear") : t("clearAll")}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={exportAll}>
+            <Download /> {t("exportHistory")}
+          </Button>
+          <Button variant={confirmAll ? "destructive" : "ghost"} size="sm" onClick={clear}>
+            <Trash2 /> {confirmAll ? t("confirmClear") : t("clearAll")}
+          </Button>
+        </div>
       </div>
+      {exported && (
+        <div className="enter rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs">
+          <div className="font-medium text-success">{t("exported")}</div>
+          <div className="num mt-0.5 break-all text-muted-foreground" dir="ltr">{exported}</div>
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         {rows.map((r, i) => {
@@ -130,9 +147,9 @@ export function HistoryView({ t, blockedIps, onBlock, onUnblock, onChanged }: Pr
                         s={s}
                         t={t}
                         first={k === 0}
-                        blocked={blockedIps.has(s.ip)}
-                        onBlock={(x) => onBlock(x, run.game)}
-                        onUnblock={onUnblock}
+                        blocked={isBlocked(s.ip)}
+                        onBlock={(target) => onBlock(s, run.game, target)}
+                        onUnblock={() => onUnblock(s.ip)}
                       />
                     ))
                   )}
