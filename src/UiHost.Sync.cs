@@ -54,6 +54,8 @@ namespace GameNetKit
             public string Legacy = "";   // the secret version 1.0.0 derived from the code; sent only to upgrade an older registration
             public string PlayerId = "";   // sent as x-player when set
             public string Admin = "";      // the group admin code (only on the admin's PC)
+            public bool HasPassword;       // Secret was derived from the player's password (an account that can be logged into from any PC)
+            public string NewSecret = "";  // sent as x-new-secret when changing the account secret
             public long Cursor;
             public HashSet<string> Pushed = new HashSet<string>();
         }
@@ -72,6 +74,7 @@ namespace GameNetKit
                         if (d.ContainsKey("code")) c.Code = Unprotect(Convert.ToString(d["code"]));
                         if (d.ContainsKey("secret")) c.Secret = Unprotect(Convert.ToString(d["secret"]));
                         if (d.ContainsKey("admin")) c.Admin = Unprotect(Convert.ToString(d["admin"]));
+                        if (d.ContainsKey("pw") && d["pw"] is bool) c.HasPassword = (bool)d["pw"];
                         if (d.ContainsKey("cursor")) c.Cursor = Convert.ToInt64(d["cursor"]);
                         if (d.ContainsKey("pushed") && d["pushed"] is object[])
                             foreach (object o in (object[])d["pushed"]) c.Pushed.Add(Convert.ToString(o));
@@ -90,7 +93,7 @@ namespace GameNetKit
                 var d = new Dictionary<string, object>
                 {
                     { "enabled", c.Enabled }, { "code", c.Code == "" ? "" : Protect(c.Code) }, { "secret", c.Secret == "" ? "" : Protect(c.Secret) },
-                    { "admin", c.Admin == "" ? "" : Protect(c.Admin) },
+                    { "admin", c.Admin == "" ? "" : Protect(c.Admin) }, { "pw", c.HasPassword },
                     { "cursor", c.Cursor }, { "pushed", c.Pushed.ToList() }
                 };
                 string tmp = SyncPath + ".tmp";
@@ -107,7 +110,8 @@ namespace GameNetKit
             {
                 var cur = LoadSync();
                 if (cur.Code != c.Code) return;
-                cur.Cursor = c.Cursor; cur.Secret = c.Secret; cur.Pushed = c.Pushed;
+                cur.Cursor = c.Cursor; cur.Pushed = c.Pushed;
+                if (!cur.HasPassword) cur.Secret = c.Secret;   // an account password chosen meanwhile is never replaced by the loop's older secret
                 SaveSync(cur);
             }
         }
@@ -126,6 +130,7 @@ namespace GameNetKit
                 { "players", syncPlayers },
                 { "uploaded", c.Pushed.Count },
                 { "admin", c.Admin != "" },
+                { "hasPassword", c.HasPassword },
                 { "busy", syncBusy }
             };
         }
@@ -188,6 +193,7 @@ namespace GameNetKit
                 req.Headers["x-player-secret"] = c.Secret;
                 if (c.Legacy != "" && method != "GET") req.Headers["x-player-upgrade"] = c.Legacy;
                 if (c.PlayerId != "") req.Headers["x-player"] = c.PlayerId;
+                if (c.NewSecret != "") req.Headers["x-new-secret"] = c.NewSecret;
                 if (c.Admin != "" && path.StartsWith("/v1/admin/")) req.Headers["x-admin"] = c.Admin;
                 if (body != null)
                 {
@@ -205,7 +211,7 @@ namespace GameNetKit
                 if (r == null) throw new SyncException("net", e.Message);
                 int code = (int)r.StatusCode;
                 r.Close();   // an unclosed error response keeps one of the two connections to the host busy
-                throw new SyncException(code == 401 ? "code" : code == 403 ? "player" : code == 413 ? "toobig" : code == 429 ? "full" : "server", "HTTP " + code);
+                throw new SyncException(code == 401 ? "code" : code == 403 ? "player" : code == 404 ? "unknown" : code == 409 ? "taken" : code == 413 ? "toobig" : code == 429 ? "full" : "server", "HTTP " + code);
             }
         }
 
@@ -215,6 +221,116 @@ namespace GameNetKit
         void SyncOnce()
         {
             lock (syncRun) SyncCycle();
+        }
+
+        // ------------------------------------------------------------------ accounts (name + password)
+        // The password never leaves this PC: it is stretched (PBKDF2, 100k rounds, salted with the name) into a secret, and only that
+        // secret is used to prove who you are to the server. With the same name and password on another PC (or after a reinstall) the
+        // server hands back the same player id, and your own scans are restored from it.
+        static string NameKey(string n) { return Regex.Replace((n ?? "").Trim().ToLowerInvariant(), @"\s+", " "); }
+
+        static string DeriveSecret(string password, string name)
+        {
+            var salt = Encoding.UTF8.GetBytes("gamenetkit-v1|" + NameKey(name));
+            using (var kdf = new Rfc2898DeriveBytes(password, salt, 100000))
+                return BitConverter.ToString(kdf.GetBytes(32)).Replace("-", "").ToLowerInvariant();
+        }
+
+        // returns the id the server has for this name ("" = nobody has it yet); throws SyncException (player = wrong password)
+        string ServerLogin(SyncCfg c, string name)
+        {
+            var r = Call(c, "POST", "/v1/login", new Dictionary<string, object> { { "name", name } });
+            return r.ContainsKey("exists") && r["exists"] is bool && (bool)r["exists"] ? Convert.ToString(r["id"]) : "";
+        }
+
+        static string LoginError(SyncException e) { return e.Code == "player" ? "password" : e.Code == "full" ? "tries" : e.Code; }
+
+        void WriteProfile(string name, string id)
+        {
+            Directory.CreateDirectory(Program.DataDir);
+            File.WriteAllText(ProfilePath, js.Serialize(new Dictionary<string, object> { { "name", name }, { "id", id } }), new UTF8Encoding(false));
+        }
+
+        // First run: name (+ group code and password). Nothing is saved unless everything is accepted.
+        object AccountStart(Dictionary<string, object> body)
+        {
+            if (ReadProfile() != null) return Fail("locked");
+            string name = CleanName(body.ContainsKey("name") ? Convert.ToString(body["name"]) : "");
+            string code = body.ContainsKey("code") ? Convert.ToString(body["code"]).Trim() : "";
+            string pw = body.ContainsKey("password") ? Convert.ToString(body["password"]) : "";
+            if (name == "") return Fail("name");
+            var cfg = LoadSync();
+            if (code == "" || cfg.Server == "")
+            {
+                // no sharing: a local profile only
+                WriteProfile(name, NewId());
+                return Ok();
+            }
+            if (code.Length > 80) return Fail("bad code");
+            if (pw.Length < 6 || pw.Length > 100) return Fail("short");
+            cfg.Code = code; cfg.Secret = DeriveSecret(pw, name); cfg.Legacy = "";
+            string id;
+            try { id = ServerLogin(cfg, name); }
+            catch (SyncException e) { return Fail(LoginError(e)); }
+            bool restored = id != "";
+            if (!restored) id = NewId();
+            WriteProfile(name, id);
+            lock (syncLock)
+            {
+                var cur = LoadSync();
+                cur.Code = code; cur.Secret = cfg.Secret; cur.HasPassword = true; cur.Enabled = true; cur.Cursor = 0; cur.Pushed = new HashSet<string>();
+                SaveSync(cur);
+                syncError = ""; syncLastOk = DateTime.MinValue; syncDenied = 0;
+            }
+            syncWake.Set();
+            return new Dictionary<string, object> { { "ok", true }, { "restored", restored } };
+        }
+
+        // An existing player (from before passwords) chooses a password; or a player whose account was reset / has a new password
+        // logs in again. Same checks as above, and the old secret is accepted once to carry the account over.
+        object AccountPassword(Dictionary<string, object> body)
+        {
+            var me = ReadProfile();
+            string pw = body.ContainsKey("password") ? Convert.ToString(body["password"]) : "";
+            var cfg = LoadSync();
+            if (me == null || cfg.Server == "" || cfg.Code == "") return Fail("nocode");
+            if (pw.Length < 6 || pw.Length > 100) return Fail("short");
+            string name = Convert.ToString(me["name"]), myId = Convert.ToString(me["id"]);
+            string old = cfg.Secret, s = DeriveSecret(pw, name);
+            cfg.Secret = s;
+            string id;
+            try { id = ServerLogin(cfg, name); }
+            catch (SyncException e)
+            {
+                if (e.Code != "player" || cfg.HasPassword || old == "") return Fail(LoginError(e));
+                id = null;   // the name exists under the OLD secret of this PC: carry the account over below
+            }
+            if (id == null || id == "")
+            {
+                if (!cfg.HasPassword && old != "")
+                {
+                    var c2 = LoadSync(); c2.Secret = old; c2.NewSecret = s; c2.PlayerId = myId;
+                    using (var sha = SHA256.Create())
+                        c2.Legacy = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(c2.Code + "|" + myId + "|gamenetkit-player"))).Replace("-", "").ToLowerInvariant();
+                    try { Call(c2, "POST", "/v1/password", null); }
+                    catch (SyncException e)
+                    {
+                        if (e.Code == "unknown") { /* never uploaded: nothing to carry over */ }
+                        else return Fail(e.Code == "player" ? "password" : e.Code);
+                    }
+                }
+            }
+            else if (id != myId) { WriteProfile(name, id); myId = id; }
+            lock (syncLock)
+            {
+                var cur = LoadSync();
+                cur.Secret = s; cur.HasPassword = true;
+                if (id != null && id != "" && id != Convert.ToString(me["id"])) { cur.Cursor = 0; cur.Pushed = new HashSet<string>(); }
+                SaveSync(cur);
+                syncError = ""; syncDenied = 0;
+            }
+            syncWake.Set();
+            return Ok();
         }
 
         // ------------------------------------------------------------------ group admin
@@ -234,6 +350,16 @@ namespace GameNetKit
             return Ok();
         }
 
+        object AdminReset(Dictionary<string, object> body)
+        {
+            var c = LoadSync();
+            if (c.Admin == "") return Fail("admin");
+            string player = body.ContainsKey("player") ? Convert.ToString(body["player"]) : "";
+            if (!Regex.IsMatch(player, "^[a-f0-9]{6,16}$")) return Fail("bad player");
+            try { return Call(c, "POST", "/v1/admin/reset", new Dictionary<string, object> { { "player", player } }); }
+            catch (SyncException e) { return Fail(e.Code == "player" ? "admin" : e.Code); }
+        }
+
         object AdminLock()
         {
             lock (syncLock) { var cur = LoadSync(); cur.Admin = ""; SaveSync(cur); }
@@ -248,6 +374,16 @@ namespace GameNetKit
             catch (SyncException e) { return Fail(e.Code == "player" ? "admin" : e.Code); }
         }
 
+        object AdminRuns(Dictionary<string, object> body)
+        {
+            var c = LoadSync();
+            if (c.Admin == "") return Fail("admin");
+            string player = body.ContainsKey("player") ? Convert.ToString(body["player"]) : "";
+            if (!Regex.IsMatch(player, "^[a-f0-9]{6,16}$")) return Fail("bad player");
+            try { return Call(c, "GET", "/v1/admin/runs?player=" + player, null); }
+            catch (SyncException e) { return Fail(e.Code == "player" ? "admin" : e.Code); }
+        }
+
         object AdminDelete(Dictionary<string, object> body)
         {
             var c = LoadSync();
@@ -255,8 +391,11 @@ namespace GameNetKit
             string player = body.ContainsKey("player") ? Convert.ToString(body["player"]) : "";
             string game = body.ContainsKey("game") ? Convert.ToString(body["game"]) : "";
             if (!Regex.IsMatch(player, "^[a-f0-9]{6,16}$")) return Fail("bad player");
+            string run = body.ContainsKey("run") ? Convert.ToString(body["run"]) : "";
+            if (run != "" && !SafeId(run)) return Fail("bad run");
             var b = new Dictionary<string, object> { { "player", player } };
             if (game != "") b["game"] = game;
+            if (run != "") b["run"] = run;
             try { return Call(c, "POST", "/v1/admin/delete", b); }
             catch (SyncException e) { return Fail(e.Code == "player" ? "admin" : e.Code); }
         }
@@ -287,7 +426,8 @@ namespace GameNetKit
                 catch (SyncException e)
                 {
                     syncError = e.Code; Program.Log("sync: " + e.Code + " " + e.Message);
-                    if (e.Code == "player") { if (++syncDenied >= 3) RotateIdentity(c); } else syncDenied = 0;
+                    // an account with a password is never given a new identity: the owner logs in again (or the admin resets it)
+                    if (e.Code == "player" && !c.HasPassword) { if (++syncDenied >= 3) RotateIdentity(c); } else syncDenied = 0;
                 }
                 MergeSync(c);
             }
