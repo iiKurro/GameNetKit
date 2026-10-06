@@ -2,6 +2,7 @@
 // Everyone in the group uploads their own scans and downloads everybody's, so each app can show friends' records and compute
 // block suggestions from the pooled data. There are no accounts: the group is protected by one shared code (a Worker secret),
 // and each player is bound to a random secret chosen by their app the first time they upload (so nobody can post as someone else).
+// Limits: 60 players, 4000 scans per player, 256 KB per upload.
 //
 //   GET    /                    health check (no code needed)
 //   GET    /v1/status           { players, runs }
@@ -16,8 +17,10 @@ const MAX_RESULTS_PER_RUN = 40;
 const ID_RX = /^[A-Za-z0-9_-]{1,80}$/;
 const PLAYER_RX = /^[a-f0-9]{6,16}$/;
 const VERDICTS = new Set(["good", "ok", "bad", "noreply"]);
-const IPV4_RX = /^\d{1,3}(\.\d{1,3}){3}$/;
-const IPV6_RX = /^[0-9a-fA-F:]{2,45}$/;
+const MAX_PLAYERS = 60;
+const MAX_RUNS_PER_PLAYER = 4000;
+const IPV4_RX = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+const IPV6_RX = /^(?=.*:)[0-9a-fA-F:]{3,45}$/;
 
 export default {
   async fetch(request, env) {
@@ -49,7 +52,8 @@ async function sameSecret(a, b) {
   return diff === 0;
 }
 
-const str = (v, max) => (typeof v === "string" ? v.replace(/[\u0000-\u001f<>]/g, "").slice(0, max) : "");
+// control characters, bidi overrides / zero-width marks and markup characters are dropped from every text field
+const str = (v, max) => (typeof v === "string" ? v.replace(/[\p{Cc}\p{Cf}<>&]/gu, "").slice(0, max) : "");
 const int = (v, lo, hi) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : 0);
 const numOrNull = (v, hi) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Math.min(hi, Math.max(0, Number(v))));
 
@@ -112,6 +116,7 @@ async function route(request, env) {
   }
 
   if (url.pathname === "/v1/runs" && request.method === "POST") {
+    if (Number(request.headers.get("content-length") || 0) > MAX_BODY) return json({ error: "too big" }, 413);
     const text = await request.text();
     if (text.length > MAX_BODY) return json({ error: "too big" }, 413);
     let body;
@@ -120,15 +125,27 @@ async function route(request, env) {
     const id = String(body?.player?.id || "");
     const name = str(body?.player?.name, 24).trim();
     const secret = request.headers.get("x-player-secret") || "";
+    const upgrade = request.headers.get("x-player-upgrade") || "";
     if (!PLAYER_RX.test(id) || !name || secret.length < 16 || secret.length > 128) return json({ error: "bad player" }, 400);
     if (!Array.isArray(body.runs) || body.runs.length > MAX_RUNS_PER_POST) return json({ error: "bad runs" }, 400);
 
-    // the first upload of a player id fixes its secret; later calls must present the same one
+    // The first upload of a player id fixes its secret (a random one chosen by that app); later calls must present the same one.
+    // Players registered by version 1.0.0 have a secret derived from the group code: they prove it once with x-player-upgrade
+    // and the stored secret is replaced by the new random one.
     const hash = await sha256(secret);
     const row = await env.DB.prepare("SELECT secret_hash, name FROM players WHERE id = ?").bind(id).first();
-    if (!row) await env.DB.prepare("INSERT INTO players (id, name, secret_hash, created_at) VALUES (?, ?, ?, ?)").bind(id, name, hash, Date.now()).run();
-    else if (row.secret_hash !== hash) return json({ error: "player belongs to someone else" }, 403);
-    else if (row.name !== name) await env.DB.prepare("UPDATE players SET name = ? WHERE id = ?").bind(name, id).run();
+    if (!row) {
+      const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM players").first();
+      if (n.n >= MAX_PLAYERS) return json({ error: "group is full" }, 429);
+      await env.DB.prepare("INSERT INTO players (id, name, secret_hash, created_at) VALUES (?, ?, ?, ?)").bind(id, name, hash, Date.now()).run();
+    } else if (row.secret_hash !== hash) {
+      if (upgrade.length >= 16 && upgrade.length <= 128 && row.secret_hash === (await sha256(upgrade))) {
+        await env.DB.prepare("UPDATE players SET secret_hash = ?, name = ? WHERE id = ?").bind(hash, name, id).run();
+      } else return json({ error: "player belongs to someone else" }, 403);
+    } else if (row.name !== name) await env.DB.prepare("UPDATE players SET name = ? WHERE id = ?").bind(name, id).run();
+
+    const have = await env.DB.prepare("SELECT COUNT(*) AS n FROM runs WHERE player_id = ?").bind(id).first();
+    if (have.n >= MAX_RUNS_PER_PLAYER) return json({ error: "too many scans" }, 429);
 
     const clean = body.runs.map(cleanRun).filter(Boolean);
     if (clean.length) {
