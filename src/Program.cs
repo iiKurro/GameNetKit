@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.7.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "0.7.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -35,6 +35,11 @@ namespace GameNetKit
         public static int Main(string[] argv)
         {
             ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072 | SecurityProtocolType.Tls;
+            // anything that escapes ends up in app-log.txt, so a crash or a vanished window can be explained afterwards
+            AppDomain.CurrentDomain.UnhandledException += delegate (object s, UnhandledExceptionEventArgs e)
+            {
+                Log("UNHANDLED " + (e.ExceptionObject is Exception ? ((Exception)e.ExceptionObject).ToString() : Convert.ToString(e.ExceptionObject)));
+            };
             var args = ParseArgs(argv);
             if (args.ContainsKey("fakeversion")) Version = args["fakeversion"];
             // demo runs live in their own folder so they can never touch real results, blocks or a running instance
@@ -44,6 +49,23 @@ namespace GameNetKit
             if (args.ContainsKey("guard")) return Guard.Run();
             if (args.ContainsKey("selftest")) return SelfTest();
             return new UiHost(args).Run();
+        }
+
+        static readonly object logLock = new object();
+
+        public static void Log(string line)
+        {
+            try
+            {
+                lock (logLock)
+                {
+                    Directory.CreateDirectory(DataDir);
+                    string p = Path.Combine(DataDir, "app-log.txt");
+                    if (File.Exists(p) && new FileInfo(p).Length > 200 * 1024) File.Delete(p);   // keep it small
+                    File.AppendAllText(p, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " v" + Version + " " + line + Environment.NewLine);
+                }
+            }
+            catch { }
         }
 
         public static Dictionary<string, string> ParseArgs(string[] argv)
@@ -155,29 +177,48 @@ namespace GameNetKit
                 var thread = new Thread(Serve) { IsBackground = true };
                 thread.Start();
 
-                Process browser = args.ContainsKey("nowindow") ? null : OpenWindow("http://127.0.0.1:" + port + "/?t=" + token);
+                // windows left over from an earlier run still point at a dead server (that is the "frozen window"): close them first
+                bool useWindow = !args.ContainsKey("nowindow");
+                if (useWindow) KillStaleWindows();
+                Process browser = useWindow ? OpenWindow("http://127.0.0.1:" + port + "/?t=" + token) : null;
                 browserProc = browser;
                 DateTime started = DateTime.Now;
+                DateTime lastWindowSeen = DateTime.Now;
+                DateTime nextCheck = DateTime.Now.AddSeconds(5);
+                string reason = "";
 
+                // The server lives as long as its window does. The window is found by its private profile folder, NOT through the
+                // process we started: msedge.exe often hands the window to another process and exits at once, which used to make
+                // the server quit while the window was still open. A missed heartbeat (sleep, minimized, throttled timers) no longer ends it.
                 while (true)
                 {
                     Thread.Sleep(1000);
                     bool busy = IsWorkerBusy();
+                    if (useWindow && DateTime.Now >= nextCheck)
+                    {
+                        nextCheck = DateTime.Now.AddSeconds(5);
+                        if (WindowAlive()) lastWindowSeen = DateTime.Now;
+                    }
+                    bool windowGone = useWindow && (DateTime.Now - started).TotalSeconds > 45 && (DateTime.Now - lastWindowSeen).TotalSeconds > 20;
                     if (!busy)
                     {
-                        if (seenBeat && (DateTime.Now - lastBeat).TotalSeconds > 120) break;
-                        if (!seenBeat && (DateTime.Now - started).TotalSeconds > 90) break;
-                        // window closed by the user (only trust this if it lived a while)
-                        if (browser != null && (DateTime.Now - started).TotalSeconds > 8 && SafeExited(browser)) break;
+                        if (windowGone) { reason = "window closed"; break; }
+                        if (!useWindow)
+                        {
+                            if (seenBeat && (DateTime.Now - lastBeat).TotalSeconds > 120) { reason = "no heartbeat"; break; }
+                            if (!seenBeat && (DateTime.Now - started).TotalSeconds > 90) { reason = "nothing connected"; break; }
+                        }
                     }
-                    else if (browser != null && (DateTime.Now - started).TotalSeconds > 8 && SafeExited(browser))
+                    else if (windowGone)
                     {
                         // user closed the window in the middle of a run: stop the worker
                         try { File.WriteAllText(Path.Combine(Program.DataDir, "cancel.flag"), "1"); } catch { }
                         Thread.Sleep(3000);
+                        reason = "window closed during a scan";
                         break;
                     }
                 }
+                Program.Log("server stopped: " + reason);
                 try { listener.Stop(); } catch { }
                 try { File.Delete(Path.Combine(Program.DataDir, "port.txt")); } catch { }
             }
@@ -246,7 +287,15 @@ namespace GameNetKit
             while (listener.IsListening)
             {
                 HttpListenerContext ctx;
-                try { ctx = listener.GetContext(); } catch { return; }
+                // a network hiccup while accepting must not end the loop for good (that would leave a server that never answers again)
+                try { ctx = listener.GetContext(); }
+                catch (Exception e)
+                {
+                    if (!listener.IsListening) return;
+                    Program.Log("accept failed, continuing: " + e.Message);
+                    Thread.Sleep(100);
+                    continue;
+                }
                 ThreadPool.QueueUserWorkItem(delegate { Handle(ctx); });
             }
         }
