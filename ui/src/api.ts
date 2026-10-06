@@ -6,6 +6,8 @@
 
 export interface Info {
   version: string;
+  /** where this PC keeps its files (history, blocks, profile) */
+  dataDir: string;
   games: Game[];
   repo: string;
 }
@@ -48,6 +50,25 @@ export interface BlockEntry {
   method?: "firewall" | "route";
   /** "game": active only while that game runs (the guard switches it); default "always" */
   mode?: "always" | "game";
+}
+
+/** who uses this copy: a name you choose plus a random id (no server, no sign-in) */
+export interface Profile {
+  name: string;
+  id: string;
+  /** the Windows user name, offered as the default */
+  suggested: string;
+  dataDir: string;
+}
+
+/** a friend whose export file was imported; their scans are kept apart from mine */
+export interface Person {
+  slug: string;
+  name: string;
+  id: string;
+  importedAt: string;
+  counts: Record<string, number>;
+  total: number;
 }
 
 export interface GuardState {
@@ -123,12 +144,20 @@ export const api = {
   guardStop: () => call<{ ok: boolean }>("/api/guard/stop", {}),
   unblock: (ip: string) => call<{ ok: boolean; error?: string; detail?: string }>("/api/unblock", { ip }),
   // history is always per game: scans of different games are never mixed
-  history: (game: string) => call<RunSummary[]>("/api/history", { game }),
+  // person = slug of an imported friend ("" = my own scans)
+  history: (game: string, person = "") => call<RunSummary[]>("/api/history", { game, person }),
   historyCounts: () => call<Record<string, number>>("/api/history/counts"),
-  historyGet: (game: string, id: string) => call<Run>("/api/history/get", { game, id }),
-  historyDelete: (game: string, id: string) => call<{ ok: boolean }>("/api/history/delete", { game, id }),
-  historyClear: (game: string) => call<{ ok: boolean }>("/api/history/clear", { game }),
+  historyGet: (game: string, id: string, person = "") => call<Run>("/api/history/get", { game, id, person }),
+  historyDelete: (game: string, id: string, person = "") => call<{ ok: boolean }>("/api/history/delete", { game, id, person }),
+  historyClear: (game: string, person = "") => call<{ ok: boolean }>("/api/history/clear", { game, person }),
   historyExport: (game: string) => call<{ ok: boolean; path: string; count: number }>("/api/history/export", { game }),
+  historyExportAll: () => call<{ ok: boolean; path: string; count: number; games: number; error?: string }>("/api/history/exportall", {}),
+  profile: () => call<Profile>("/api/profile"),
+  profileSet: (name: string) => call<Profile & { ok?: boolean; error?: string }>("/api/profile/set", { name }),
+  people: () => call<Person[]>("/api/people"),
+  peopleImport: (content: string) => call<{ ok: boolean; name?: string; runs?: number; slug?: string; error?: string }>("/api/people/import", { content }),
+  peopleDelete: (slug: string) => call<{ ok: boolean }>("/api/people/delete", { slug }),
+  openData: () => call<{ ok: boolean }>("/api/opendata", {}),
   blocksSync: () => call<BlockEntry[]>("/api/blocks/sync", {}),
   unblockAll: () => call<{ ok: boolean; error?: string; detail?: string }>("/api/unblockall", {}),
 };
