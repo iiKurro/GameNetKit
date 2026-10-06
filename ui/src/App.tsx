@@ -48,6 +48,7 @@ export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [editName, setEditName] = useState(false);
+  const [lost, setLost] = useState(false);
 
   const refreshPeople = useCallback(async () => {
     setPeople(await api.people().catch(() => [] as Person[]));
@@ -84,11 +85,25 @@ export default function App() {
     }).catch(() => {});
     void refreshBlocks();
     void refreshHistoryCount();
-    const poll = setInterval(() => api.state().then(setState).catch(() => {}), 1000);
-    const guardPoll = setInterval(() => api.guard().then(setGuard).catch(() => {}), 3000);
+    // one request at a time per poll: a slow answer must not pile up more requests behind it
+    let stateBusy = false, guardBusy = false, fails = 0;
+    const poll = setInterval(() => {
+      if (stateBusy) return;
+      stateBusy = true;
+      api.state().then(setState).catch(() => {}).finally(() => { stateBusy = false; });
+    }, 1000);
+    const guardPoll = setInterval(() => {
+      if (guardBusy) return;
+      guardBusy = true;
+      api.guard().then(setGuard).catch(() => {}).finally(() => { guardBusy = false; });
+    }, 3000);
     api.guard().then(setGuard).catch(() => {});
-    const beat = setInterval(() => api.heartbeat().catch(() => {}), 3000);
-    api.heartbeat().catch(() => {});
+    // the heartbeat doubles as the "is the app still there?" check
+    const beatOnce = () => api.heartbeat()
+      .then(() => { fails = 0; setLost(false); })
+      .catch(() => { fails++; if (fails >= 2) setLost(true); });
+    const beat = setInterval(beatOnce, 3000);
+    beatOnce();
     return () => { clearInterval(poll); clearInterval(guardPoll); clearInterval(beat); };
   }, [refreshBlocks, refreshHistoryCount]);
 
@@ -257,6 +272,18 @@ export default function App() {
           </Button>
         </div>
       </header>
+
+      {lost && (
+        <div role="alert" className="enter flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-4">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-destructive">{t("lostTitle")}</div>
+            <p className="mt-1 text-xs text-foreground/80">{t("lostText")}</p>
+          </div>
+          <Button variant="destructive" onClick={() => window.location.reload()}>
+            <RefreshCw /> {t("retry")}
+          </Button>
+        </div>
+      )}
 
       {upd?.hasUpdate && (
         <div className="enter flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 p-4">
