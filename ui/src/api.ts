@@ -114,15 +114,32 @@ export interface UpdateInfo {
   error: string;
 }
 
+/** calls that legitimately take longer (an admin prompt, a download, PowerShell) get a longer limit; everything else 20 s */
+const SLOW: Record<string, number> = {
+  "/api/block": 120000, "/api/unblock": 120000, "/api/unblockall": 120000,
+  "/api/guard/start": 60000, "/api/guard/stop": 30000,
+  "/api/update/check": 30000, "/api/update/apply": 180000,
+  "/api/blocks": 60000, "/api/blocks/sync": 90000,
+  "/api/people/import": 90000, "/api/history/export": 60000, "/api/history/exportall": 60000,
+};
+
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const token = (window as unknown as { __TOKEN__?: string }).__TOKEN__ ?? "";
-  const res = await fetch(path, {
-    method: body === undefined ? "GET" : "POST",
-    headers: body === undefined ? { "X-Token": token } : { "Content-Type": "application/json", "X-Token": token },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`${path}: ${res.status}`);
-  return (await res.json()) as T;
+  // no request may wait forever: a stuck call would leave a button spinning for good
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), SLOW[path] ?? 20000);
+  try {
+    const res = await fetch(path, {
+      method: body === undefined ? "GET" : "POST",
+      headers: body === undefined ? { "X-Token": token } : { "Content-Type": "application/json", "X-Token": token },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: ctl.signal,
+    });
+    if (!res.ok) throw new Error(`${path}: ${res.status}`);
+    return (await res.json()) as T;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export const api = {
