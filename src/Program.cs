@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "1.0.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "1.0.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -35,7 +35,11 @@ namespace GameNetKit
         public static string Slug(string game)
         {
             string s = System.Text.RegularExpressions.Regex.Replace(game ?? "", "[^A-Za-z0-9]", "");
-            return s == "" ? "Other" : s;
+            if (s != "") return s;
+            // a name with no Latin letters (e.g. an Arabic title) must not share one folder with every other such game
+            uint h = 2166136261;
+            foreach (char ch in game ?? "") h = (h ^ ch) * 16777619;
+            return "Game" + h.ToString("x8");
         }
 
         [STAThread]
@@ -147,7 +151,7 @@ namespace GameNetKit
         Process worker;
         Process browserProc;
         // last update check
-        string latestTag = "", assetUrl = "", notes = "";
+        string latestTag = "", assetUrl = "", assetSha = "", notes = "";
         bool hasUpdate;
 
         public UiHost(Dictionary<string, string> a) { args = a; }
@@ -356,10 +360,7 @@ namespace GameNetKit
                     case "/api/profile": result = ProfileGet(); break;
                     case "/api/profile/set": result = ProfileSet(ReadBody(ctx)); break;
                     case "/api/people": result = PeopleList(); break;
-                    case "/api/people/import": result = PeopleImport(ReadBody(ctx)); break;
                     case "/api/people/delete": result = PeopleDelete(ReadBody(ctx)); break;
-                    case "/api/history/exportall": result = HistoryExportAll(); break;
-                    case "/api/opendata": OpenData(); result = Ok(); break;
                     case "/api/blocks": result = Blocks(); break;
                     case "/api/blocks/sync": result = SyncBlocks(); break;
                     case "/api/sync/state": result = SyncState(); break;
@@ -379,7 +380,6 @@ namespace GameNetKit
                     case "/api/history/get": result = HistoryGet(ReadBody(ctx)); break;
                     case "/api/history/delete": result = HistoryDelete(ReadBody(ctx)); break;
                     case "/api/history/clear": result = HistoryClear(ReadBody(ctx)); break;
-                    case "/api/history/export": result = HistoryExport(ReadBody(ctx)); break;
                     case "/api/update/check": result = CheckUpdate(); break;
                     case "/api/update/apply": result = ApplyUpdate(); break;
                     default: Send(ctx, 404, "text/plain", "not found"); return;
@@ -418,7 +418,7 @@ namespace GameNetKit
         // ------------------------------------------------------------------ games / config
         List<Dictionary<string, object>> Games()
         {
-            return GameList.Load(Path.GetDirectoryName(exePath), js);
+            return GameList.Load(Path.GetDirectoryName(exePath), js, false);
         }
 
         int Cfg(string key, int def)
@@ -481,7 +481,13 @@ namespace GameNetKit
         {
             var st = EmptyState(phase, code, err);
             st["game"] = game;
-            File.WriteAllText(statePath, js.Serialize(st), new UTF8Encoding(false));
+            // the window and the worker read/write this file all the time: this runs on a pool thread, so an exception here would end the app
+            for (int i = 0; i < 6; i++)
+            {
+                try { File.WriteAllText(statePath, js.Serialize(st), new UTF8Encoding(false)); return; }
+                catch (IOException) { Thread.Sleep(50); }
+                catch (UnauthorizedAccessException) { Thread.Sleep(50); }
+            }
         }
 
         Dictionary<string, object> Start(Dictionary<string, object> body)
@@ -540,12 +546,17 @@ namespace GameNetKit
                     string ver = tag.TrimStart('v', 'V');
                     latestTag = ver;
                     notes = rel.ContainsKey("body") && rel["body"] != null ? Convert.ToString(rel["body"]) : "";
-                    assetUrl = "";
+                    assetUrl = ""; assetSha = "";
                     foreach (object o in (object[])rel["assets"])
                     {
                         var asset = (Dictionary<string, object>)o;
                         if (string.Equals((string)asset["name"], "GameNetKit.exe", StringComparison.OrdinalIgnoreCase))
+                        {
                             assetUrl = (string)asset["browser_download_url"];
+                            // GitHub publishes the SHA-256 of every release file ("sha256:<hex>"): the download is checked against it
+                            string dg = asset.ContainsKey("digest") && asset["digest"] != null ? Convert.ToString(asset["digest"]) : "";
+                            if (dg.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)) assetSha = dg.Substring(7).ToLowerInvariant();
+                        }
                     }
                     hasUpdate = assetUrl != "" && new Version(ver) > new Version(Program.Version);
                     res["latest"] = ver;
@@ -577,6 +588,12 @@ namespace GameNetKit
                 var fi = new FileInfo(tmp);
                 bool valid = fi.Length > 20000;
                 using (var fs = File.OpenRead(tmp)) valid = valid && fs.ReadByte() == 'M' && fs.ReadByte() == 'Z';
+                if (valid && assetSha != "")
+                {
+                    using (var fs = File.OpenRead(tmp))
+                    using (var sha = SHA256.Create())
+                        valid = BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "").ToLowerInvariant() == assetSha;
+                }
                 if (!valid) { File.Delete(tmp); return new Dictionary<string, object> { { "ok", false }, { "error", "bad download" } }; }
 
                 string cmd = "/c ping 127.0.0.1 -n 3 >nul & move /y \"" + tmp + "\" \"" + exePath + "\" >nul & start \"\" \"" + exePath + "\"";
