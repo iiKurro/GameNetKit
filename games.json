@@ -1,0 +1,4 @@
+[
+  { "name": "Rocket League", "process": "RocketLeague.exe", "enabled": true },
+  { "name": "Overwatch 2", "process": "Overwatch.exe", "enabled": false }
+]
