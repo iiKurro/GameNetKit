@@ -1,4 +1,4 @@
-// Blocking one game-server address (or a /16../32 range) so the game cannot reach it. Runs elevated (UAC) via
+﻿// Blocking one game-server address (or a /16../32 range) so the game cannot reach it. Runs elevated (UAC) via
 // "GameNetKit.exe --fw block|unblock|unblockall --ip x".
 //
 // Two independent methods, both removable and both only ever touching what this app created:
@@ -105,11 +105,12 @@ namespace GameNetKit
         }
 
         // ------------------------------------------------------------------ routes
-        static int AddRoute(string target, out string o)
+        static int AddRoute(string target, bool activeOnly, out string o)
         {
+            // activeOnly: the route disappears at reboot, so a block that only lasts while a game runs cannot get stuck
             return Powershell("$i=(Get-NetIPInterface -InterfaceAlias '" + LoAlias + "' -AddressFamily IPv4 -ErrorAction Stop).ifIndex; " +
                               "New-NetRoute -DestinationPrefix '" + PrefixOf(target) + "' -InterfaceIndex $i -NextHop 0.0.0.0 -RouteMetric " + RouteMetric +
-                              " -ErrorAction Stop | Out-Null", out o);
+                              (activeOnly ? " -PolicyStore ActiveStore" : "") + " -ErrorAction Stop | Out-Null", out o);
         }
 
         static int RemoveRoute(string target, out string o)
@@ -190,32 +191,59 @@ namespace GameNetKit
                 }
 
                 if (!ValidIp(ip)) { Log("invalid target"); return 2; }
-                string name = RuleName(ip);
-
-                // always start clean so repeated clicks never create duplicates (a rule or a route may exist)
-                int rcDel = Netsh("advfirewall firewall delete rule name=\"" + name + "\"", out o);
-                Log("delete rule rc=" + rcDel + " " + Flat(o));
-                int rcDelRoute = RemoveRoute(ip, out o);
-                Log("delete route rc=" + rcDelRoute + " " + Flat(o));
-                if (action == "unblock") return RouteActive(ip) ? 4 : 0;
+                if (action == "unblock") { Remove(ip); return RouteActive(ip) ? 4 : 0; }
                 if (action != "block") return 2;
+                return Apply(ip, false);
+            }
+            catch (Exception e) { Log("exception: " + e.Message); return 3; }
+        }
 
-                // 1) PowerShell's firewall cmdlet
-                int rc = Powershell("New-NetFirewallRule -DisplayName '" + name + "' -Direction Outbound -Action Block -Protocol UDP -RemoteAddress " + ip +
+        // Removes whatever this app created for one target (the rule and/or the route). Needs admin.
+        public static void Remove(string ip)
+        {
+            string o;
+            int rcDel = Netsh("advfirewall firewall delete rule name=\"" + RuleName(ip) + "\"", out o);
+            Log("delete rule " + ip + " rc=" + rcDel + " " + Flat(o));
+            int rcDelRoute = RemoveRoute(ip, out o);
+            Log("delete route " + ip + " rc=" + rcDelRoute + " " + Flat(o));
+        }
+
+        // set once all firewall attempts failed in this process (the guard is long-lived): later blocks go straight to the route
+        static bool firewallRefuses;
+
+        // Blocks one target: a firewall rule first, a dead-end route when Windows refuses firewall rules. Needs admin. 0 = done.
+        // temporary: a route (if one is needed) only lives until the next reboot - used for blocks that follow a running game.
+        public static int Apply(string ip, bool temporary)
+        {
+            try
+            {
+                if (!ValidIp(ip)) { Log("invalid target"); return 2; }
+                string o;
+                string name = RuleName(ip);
+                Remove(ip);   // always start clean so repeated clicks never create duplicates
+
+                int rc = 1;
+                if (!firewallRefuses)
+                {
+                    // 1) PowerShell's firewall cmdlet
+                    rc = Powershell("New-NetFirewallRule -DisplayName '" + name + "' -Direction Outbound -Action Block -Protocol UDP -RemoteAddress " + ip +
                                     " -Description 'Created by GameNetKit' -ErrorAction Stop | Out-Null", out o);
-                Log("firewall (powershell) rc=" + rc + " " + Flat(o));
-                if (rc == 0) return 0;
-                // 2) netsh with an explicit start-end range
-                rc = Netsh("advfirewall firewall add rule name=\"" + name + "\" dir=out action=block protocol=UDP remoteip=" + ToRange(ip) +
-                           " description=\"Created by GameNetKit\"", out o);
-                Log("firewall (netsh range) rc=" + rc + " " + Flat(o));
-                if (rc == 0) return 0;
-                // 3) netsh with the address exactly as given
-                rc = Netsh("advfirewall firewall add rule name=\"" + name + "\" dir=out action=block protocol=UDP remoteip=" + ip, out o);
-                Log("firewall (netsh) rc=" + rc + " " + Flat(o));
-                if (rc == 0) return 0;
+                    Log("firewall (powershell) rc=" + rc + " " + Flat(o));
+                    if (rc == 0) return 0;
+                    // 2) netsh with an explicit start-end range
+                    rc = Netsh("advfirewall firewall add rule name=\"" + name + "\" dir=out action=block protocol=UDP remoteip=" + ToRange(ip) +
+                               " description=\"Created by GameNetKit\"", out o);
+                    Log("firewall (netsh range) rc=" + rc + " " + Flat(o));
+                    if (rc == 0) return 0;
+                    // 3) netsh with the address exactly as given
+                    rc = Netsh("advfirewall firewall add rule name=\"" + name + "\" dir=out action=block protocol=UDP remoteip=" + ip, out o);
+                    Log("firewall (netsh) rc=" + rc + " " + Flat(o));
+                    if (rc == 0) return 0;
+                    firewallRefuses = true;
+                    Log("firewall refuses rules: later blocks in this session use the route directly");
+                }
                 // 4) the firewall store refuses new rules on this PC: block with a dead-end route instead
-                rc = AddRoute(ip, out o);
+                rc = AddRoute(ip, temporary, out o);
                 Log("route rc=" + rc + " " + Flat(o));
                 if (rc == 0) Log("blocked with a network route (firewall rules are not accepted on this PC)");
                 return rc;
