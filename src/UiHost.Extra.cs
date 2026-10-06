@@ -156,6 +156,30 @@ namespace GameNetKit
             return Ok();
         }
 
+        // Writes every saved run into one JSON file (server IPs and ping numbers only) and shows it in Explorer.
+        object HistoryExport()
+        {
+            ImportLegacyCsv();
+            var runs = new List<object>();
+            if (Directory.Exists(HistoryDir))
+                foreach (string f in Directory.GetFiles(HistoryDir, "*.json").OrderBy(x => x))
+                {
+                    var run = LoadRun(f);
+                    if (run != null) runs.Add(run);
+                }
+            string dir = Path.Combine(Program.DataDir, "Exports");
+            Directory.CreateDirectory(dir);
+            string path = Path.Combine(dir, "GameNetKit_history_" + DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture) + ".json");
+            var doc = new Dictionary<string, object>
+            {
+                { "app", "GameNetKit" }, { "version", Program.Version },
+                { "exported", DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) }, { "runs", runs }
+            };
+            File.WriteAllText(path, js.Serialize(doc), new UTF8Encoding(false));
+            if (!Demo) { try { Process.Start("explorer.exe", "/select,\"" + path + "\""); } catch { } }
+            return new Dictionary<string, object> { { "ok", true }, { "path", path }, { "count", runs.Count } };
+        }
+
         object HistoryClear()
         {
             if (Directory.Exists(HistoryDir))
