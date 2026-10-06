@@ -12,7 +12,26 @@ namespace GameNetKit
     {
         public const string Prefix = "GameNetKit block ";
 
-        public static string RuleName(string ip) { return Prefix + ip; }
+        public static string RuleName(string ip) { return Prefix + ip.Replace("/", "-"); }
+
+        public static string LogPath { get { return System.IO.Path.Combine(Program.DataDir, "fw-log.txt"); } }
+
+        static void Log(string line)
+        {
+            try { System.IO.File.AppendAllText(LogPath, DateTime.Now.ToString("HH:mm:ss") + " " + line + Environment.NewLine); } catch { }
+        }
+
+        // last lines of the log, shown in the UI when something fails
+        public static string LastLog()
+        {
+            try
+            {
+                var lines = System.IO.File.ReadAllLines(LogPath);
+                int from = Math.Max(0, lines.Length - 4);
+                return string.Join("\n", lines, from, lines.Length - from);
+            }
+            catch { return ""; }
+        }
 
         // A target is a public IPv4 address, or a public range a.b.c.d/16 .. /32 (never anything wider than /16).
         public static bool ValidIp(string s)
@@ -55,17 +74,24 @@ namespace GameNetKit
         // Elevated entry point. Exit code 0 = done.
         public static int Run(Dictionary<string, string> a)
         {
-            string action = a["fw"];
-            string ip = a.ContainsKey("ip") ? a["ip"] : "";
-            if (!ValidIp(ip)) return 2;
-            string o;
-            string name = RuleName(ip);
-            // always start clean so repeated clicks never create duplicates
-            Netsh("advfirewall firewall delete rule name=\"" + name + "\"", out o);
-            if (action == "unblock") return 0;
-            if (action != "block") return 2;
-            return Netsh("advfirewall firewall add rule name=\"" + name + "\" dir=out action=block protocol=UDP remoteip=" + ip +
-                         " description=\"Created by GameNetKit\"", out o);
-        }
-    }
+            try
+            {
+                string action = a["fw"];
+                string ip = a.ContainsKey("ip") ? a["ip"] : "";
+                Log("--- " + action + " " + ip);
+                if (!ValidIp(ip)) { Log("invalid target"); return 2; }
+                string o;
+                string name = RuleName(ip);
+                // always start clean so repeated clicks never create duplicates
+                int rcDel = Netsh("advfirewall firewall delete rule name=\"" + name + "\"", out o);
+                Log("delete rc=" + rcDel + " " + o.Trim().Replace("\r", "").Replace("\n", " "));
+                if (action == "unblock") return 0;
+                if (action != "block") return 2;
+                int rc = Netsh("advfirewall firewall add rule name=\"" + name + "\" dir=out action=block protocol=UDP remoteip=" + ip +
+                               " description=\"Created by GameNetKit\"", out o);
+                Log("add rc=" + rc + " " + o.Trim().Replace("\r", "").Replace("\n", " "));
+                return rc;
+            }
+            catch (Exception e) { Log("exception: " + e.Message); return 3; }
+        }    }
 }
