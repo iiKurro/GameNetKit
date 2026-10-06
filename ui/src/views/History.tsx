@@ -1,17 +1,26 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Download, Gamepad2, History as HistoryIcon, Trash2 } from "lucide-react";
 import { api, type Run, type RunSummary, type ServerResult } from "@/api";
 import type { Key } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { Flag } from "@/lib/flags";
+import { rangeStats, suggestions } from "@/lib/stats";
 import { Button } from "@/components/ui/button";
 import { Status, type StatusVariant } from "@/components/ui/status";
+import { RowSkeleton, ServerCardSkeleton } from "@/components/ui/skeleton";
 import { ResultCard, locationOf, verdictLabel } from "@/components/ResultCard";
+import { StatsCard } from "@/components/StatsCard";
+import { Suggestions } from "@/components/Suggestions";
 
 type T = (k: Key) => string;
+type Sort = "new" | "old" | "pingLow" | "pingHigh";
 
 const verdictVariant: Record<ServerResult["verdict"], StatusVariant> = {
   good: "success", ok: "warning", bad: "error", noreply: "default",
 };
+
+const selectCls =
+  "h-8 cursor-pointer rounded-md border border-border bg-card px-2 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary/60";
 
 interface Props {
   t: T;
@@ -32,6 +41,8 @@ export function HistoryView({ t, games, counts, isBlocked, onBlock, onUnblock, o
   const [confirmId, setConfirmId] = useState("");
   const [confirmAll, setConfirmAll] = useState(false);
   const [exported, setExported] = useState("");
+  const [country, setCountry] = useState("");
+  const [sort, setSort] = useState<Sort>("new");
 
   const load = useCallback(async () => {
     if (!sel) return;
@@ -41,7 +52,7 @@ export function HistoryView({ t, games, counts, isBlocked, onBlock, onUnblock, o
   }, [sel, onChanged]);
 
   useEffect(() => {
-    setRows(null); setOpen(""); setRun(null); setConfirmId(""); setConfirmAll(false); setExported("");
+    setRows(null); setOpen(""); setRun(null); setConfirmId(""); setConfirmAll(false); setExported(""); setCountry("");
     void load();
   }, [load]);
 
@@ -50,6 +61,23 @@ export function HistoryView({ t, games, counts, isBlocked, onBlock, onUnblock, o
     const id = setTimeout(() => { setConfirmId(""); setConfirmAll(false); }, 4000);
     return () => clearTimeout(id);
   }, [confirmId, confirmAll]);
+
+  const countries = useMemo(
+    () => [...new Set((rows ?? []).map((r) => r.best?.country).filter((c): c is string => !!c && c !== "?"))].sort(),
+    [rows],
+  );
+
+  // rows arrive newest first; filter and sort only change what is listed, the statistics always use every scan
+  const shown = useMemo(() => {
+    let list = (rows ?? []).filter((r) => !country || r.best?.country === country);
+    const ping = (r: RunSummary) => r.best?.avg ?? Number.MAX_SAFE_INTEGER;
+    if (sort === "old") list = [...list].reverse();
+    if (sort === "pingLow") list = [...list].sort((a, b) => ping(a) - ping(b));
+    if (sort === "pingHigh") list = [...list].sort((a, b) => (b.best?.avg ?? -1) - (a.best?.avg ?? -1));
+    return list;
+  }, [rows, country, sort]);
+
+  const tips = useMemo(() => (rows ? suggestions(rangeStats(rows), isBlocked) : []), [rows, isBlocked]);
 
   const toggle = async (id: string) => {
     if (open === id) { setOpen(""); setRun(null); return; }
@@ -99,7 +127,11 @@ export function HistoryView({ t, games, counts, isBlocked, onBlock, onUnblock, o
       </div>
 
       {rows === null ? (
-        <p className="p-6 text-sm text-muted-foreground">{t("loading")}</p>
+        <>
+          <div className="overflow-hidden rounded-xl border border-border bg-card" aria-busy="true">
+            <RowSkeleton /><div className="border-t border-border" /><RowSkeleton /><div className="border-t border-border" /><RowSkeleton />
+          </div>
+        </>
       ) : rows.length === 0 ? (
         <div className="enter flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border p-12 text-center">
           <div className="flex size-12 items-center justify-center rounded-full bg-accent text-muted-foreground"><HistoryIcon className="size-6" /></div>
@@ -110,9 +142,22 @@ export function HistoryView({ t, games, counts, isBlocked, onBlock, onUnblock, o
         </div>
       ) : (
         <>
+          <Suggestions t={t} items={tips} onBlock={(s, target) => onBlock(s, sel, target)} />
+          <StatsCard rows={rows} t={t} />
+
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-base font-semibold">{t("historyOf")} {sel} <span className="num text-sm font-normal text-muted-foreground">({rows.length})</span></h2>
-            <div className="flex items-center gap-2">
+            <h2 className="text-base font-semibold">{t("historyOf")} {sel} <span className="num text-sm font-normal text-muted-foreground">({shown.length}{shown.length !== rows.length ? `/${rows.length}` : ""})</span></h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <select className={selectCls} value={country} onChange={(e) => setCountry(e.target.value)} aria-label={t("filterAll")}>
+                <option value="">{t("filterAll")}</option>
+                {countries.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <select className={selectCls} value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+                <option value="new">{t("sortNew")}</option>
+                <option value="old">{t("sortOld")}</option>
+                <option value="pingLow">{t("sortPingLow")}</option>
+                <option value="pingHigh">{t("sortPingHigh")}</option>
+              </select>
               <Button variant="secondary" size="sm" onClick={exportAll}>
                 <Download /> {t("exportHistory")}
               </Button>
@@ -129,7 +174,7 @@ export function HistoryView({ t, games, counts, isBlocked, onBlock, onUnblock, o
           )}
 
           <div className="overflow-hidden rounded-xl border border-border bg-card">
-            {rows.map((r, i) => {
+            {shown.map((r, i) => {
               const b = r.best;
               const isOpen = open === r.id;
               return (
@@ -143,7 +188,10 @@ export function HistoryView({ t, games, counts, isBlocked, onBlock, onUnblock, o
                       {b ? (
                         <>
                           <div className="num text-sm">{b.ip}</div>
-                          <div className="text-xs break-words text-muted-foreground">{locationOf(b)}</div>
+                          <div className="flex items-center gap-1.5 text-xs break-words text-muted-foreground">
+                            <Flag country={b.country} cc={b.cc} />
+                            <span>{locationOf(b)}</span>
+                          </div>
                         </>
                       ) : <span className="text-xs text-muted-foreground">—</span>}
                     </div>
@@ -163,7 +211,7 @@ export function HistoryView({ t, games, counts, isBlocked, onBlock, onUnblock, o
                   {isOpen && (
                     <div className="grid gap-4 border-t border-border bg-background/40 p-4 md:grid-cols-2">
                       {run === null ? (
-                        <p className="text-sm text-muted-foreground">{t("loading")}</p>
+                        <><ServerCardSkeleton /><ServerCardSkeleton /></>
                       ) : (
                         run.results.map((s, k) => (
                           <ResultCard
