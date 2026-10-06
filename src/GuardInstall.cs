@@ -20,7 +20,9 @@ namespace GameNetKit
         public const string TaskName = "GameNetKit Guard";
 
         public static string InstallDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "GameNetKit"); } }
-        public static string InstalledExe { get { return Path.Combine(InstallDir, "GameNetKit.exe"); } }
+        // the guard has its own file name, so Task Manager shows "GameNetKit-Guard.exe" next to "GameNetKit.exe" (the window part)
+        public const string GuardFileName = "GameNetKit-Guard.exe";
+        public static string InstalledExe { get { return Path.Combine(InstallDir, GuardFileName); } }
 
         static void Log(string line)
         {
@@ -54,11 +56,12 @@ namespace GameNetKit
             for (int i = 0; i < 20; i++)
             {
                 bool any = false;
-                foreach (Process p in Process.GetProcessesByName("GameNetKit"))
-                {
-                    try { if (p.Id != Process.GetCurrentProcess().Id && (GuardCmdLine(p.Id).Contains("--guard"))) any = true; } catch { }
-                    p.Dispose();
-                }
+                foreach (string name in new[] { "GameNetKit", "GameNetKit-Guard" })
+                    foreach (Process p in Process.GetProcessesByName(name))
+                    {
+                        try { if (p.Id != Process.GetCurrentProcess().Id && (GuardCmdLine(p.Id).Contains("--guard"))) any = true; } catch { }
+                        p.Dispose();
+                    }
                 if (!any) return;
                 Thread.Sleep(500);
             }
@@ -86,6 +89,8 @@ namespace GameNetKit
                 Directory.CreateDirectory(InstallDir);
                 if (!string.Equals(Path.GetFullPath(src), Path.GetFullPath(InstalledExe), StringComparison.OrdinalIgnoreCase))
                     File.Copy(src, InstalledExe, true);
+                // earlier versions installed the copy as GameNetKit.exe: remove it, the task now points at the guard-named file
+                try { string old = Path.Combine(InstallDir, "GameNetKit.exe"); if (File.Exists(old)) File.Delete(old); } catch (Exception e) { Log("old copy not removed: " + e.Message); }
 
                 string o;
                 string script =
