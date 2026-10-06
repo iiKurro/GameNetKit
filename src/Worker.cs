@@ -213,8 +213,11 @@ namespace GameNetKit
             while (!File.Exists(goFlag)) { CheckCancel(); Thread.Sleep(500); }
         }
 
+        static Dictionary<string, object> ownNet;
+
         static void Measure(List<Srv> list, int pings)
         {
+            var netTask = Task.Factory.StartNew(() => Analyzer.OwnNet());
             var geo = Analyzer.Geo(list.Select(s => s.Ip));
             var rows = new Dictionary<string, Dictionary<string, object>>();
             var tasks = list.Select(s => Task.Factory.StartNew(() =>
@@ -245,6 +248,7 @@ namespace GameNetKit
             })).ToArray();
             Task.WaitAll(tasks);
             results = list.Select(s => rows[s.Ip]).ToList();
+            try { ownNet = netTask.Wait(6000) ? netTask.Result : null; } catch { ownNet = null; }
             WriteCsv();
             Put("done");
         }
@@ -262,6 +266,7 @@ namespace GameNetKit
                 { "id", id }, { "time", DateTime.Now.ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture) },
                 { "game", game }, { "results", results }
             };
+            if (ownNet != null) run["net"] = ownNet;
             File.WriteAllText(Path.Combine(histDir, id + ".json"), Js.Serialize(run), new UTF8Encoding(false));
         }
 
@@ -312,6 +317,7 @@ namespace GameNetKit
                 Demo("198.51.100.7", 7777, "India", "IN", "Mumbai", "Amazon", 640, 52, 87, 12, 0, "ok"),
                 Demo("198.51.100.90", 443, "United States", "US", "Ashburn", "Epic Games", 120, 9, null, null, 100, "noreply")
             };
+            ownNet = new Dictionary<string, object> { { "isp", "Demo Telecom" }, { "country", "Saudi Arabia" } };
             WriteCsv();
             Put("done");
         }
