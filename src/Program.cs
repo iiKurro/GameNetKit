@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.3.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "0.4.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -274,6 +274,7 @@ namespace GameNetKit
                     case "/api/history/get": result = HistoryGet(ReadBody(ctx)); break;
                     case "/api/history/delete": result = HistoryDelete(ReadBody(ctx)); break;
                     case "/api/history/clear": result = HistoryClear(); break;
+                    case "/api/history/export": result = HistoryExport(); break;
                     case "/api/update/check": result = CheckUpdate(); break;
                     case "/api/update/apply": result = ApplyUpdate(); break;
                     default: Send(ctx, 404, "text/plain", "not found"); return;
