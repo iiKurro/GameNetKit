@@ -1,4 +1,4 @@
-// Packet-capture parsing, ping measurement, geo lookup. Pure logic, no UI. (C# 5 / .NET Framework 4)
+﻿// Packet-capture parsing, ping measurement, geo lookup. Pure logic, no UI. (C# 5 / .NET Framework 4)
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -28,8 +28,23 @@ namespace GameNetKit
             @"(\d{1,3}(?:\.\d{1,3}){3})\.(\d{1,5}) > (\d{1,3}(?:\.\d{1,3}){3})\.(\d{1,5}):.*?length (\d+)",
             RegexOptions.Compiled);
 
+        // same line format as above, IPv6 flavour: "2001:db8::1.50000 > 2a00:1450::200e.7777: UDP, length 58"
+        static readonly Regex PacketRx6 = new Regex(
+            @"((?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4})\.(\d{1,5}) > ((?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4})\.(\d{1,5}):.*?length (\d+)",
+            RegexOptions.Compiled);
+
         public static bool IsPublicIp(string ip)
         {
+            IPAddress addr;
+            if (!IPAddress.TryParse(ip, out addr)) return false;
+            if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+            {
+                byte[] b = addr.GetAddressBytes();
+                if (b.All(x => x == 0) || IPAddress.IsLoopback(addr) || addr.IsIPv6LinkLocal || addr.IsIPv6Multicast || addr.IsIPv6SiteLocal) return false;
+                if ((b[0] & 0xFE) == 0xFC) return false;                                  // unique local fc00::/7
+                bool mapped = b.Take(10).All(x => x == 0) && b[10] == 0xFF && b[11] == 0xFF;   // ::ffff:a.b.c.d
+                return !mapped;
+            }
             int[] o = ip.Split('.').Select(int.Parse).ToArray();
             if (o[0] == 10 || o[0] == 127 || o[0] == 0 || o[0] >= 224) return false;
             if (o[0] == 192 && o[1] == 168) return false;
@@ -47,6 +62,7 @@ namespace GameNetKit
             foreach (string line in lines)
             {
                 Match m = PacketRx.Match(line);
+                if (!m.Success) m = PacketRx6.Match(line);
                 if (!m.Success) continue;
                 parsedLines++;
                 int sp = int.Parse(m.Groups[2].Value);
@@ -55,6 +71,8 @@ namespace GameNetKit
                 if (ports.Contains(sp)) { remote = m.Groups[3].Value; rport = dp; }
                 else if (ports.Contains(dp)) { remote = m.Groups[1].Value; rport = sp; }
                 else continue;
+                IPAddress parsedRemote;
+                if (IPAddress.TryParse(remote, out parsedRemote)) remote = parsedRemote.ToString();   // one canonical spelling per address
                 if (!IsPublicIp(remote)) continue;
                 Srv s;
                 if (!map.TryGetValue(remote, out s)) { s = new Srv { Ip = remote, Port = rport }; map[remote] = s; }
@@ -118,7 +136,7 @@ namespace GameNetKit
             try
             {
                 var js = new JavaScriptSerializer();
-                var body = ips.Select(ip => new Dictionary<string, object> { { "query", ip }, { "fields", "status,country,city,isp,query" } }).ToList();
+                var body = ips.Select(ip => new Dictionary<string, object> { { "query", ip }, { "fields", "status,country,countryCode,city,isp,query" } }).ToList();
                 var req = (HttpWebRequest)WebRequest.Create("http://ip-api.com/batch");
                 req.Method = "POST";
                 req.ContentType = "application/json";
@@ -157,25 +175,33 @@ namespace GameNetKit
 
         public static void CollectUdpPorts(HashSet<int> pids, HashSet<int> into)
         {
+            CollectUdpPorts(pids, into, 2);    // IPv4
+            CollectUdpPorts(pids, into, 23);   // IPv6
+        }
+
+        // af 2 = AF_INET (12-byte rows), af 23 = AF_INET6 (28-byte rows: addr[16], scope, port, pid)
+        static void CollectUdpPorts(HashSet<int> pids, HashSet<int> into, int af)
+        {
+            int rowSize = af == 2 ? 12 : 28, portOff = af == 2 ? 4 : 20, pidOff = af == 2 ? 8 : 24;
             for (int attempt = 0; attempt < 3; attempt++)
             {
                 int size = 0;
-                GetExtendedUdpTable(IntPtr.Zero, ref size, true, 2, 1, 0);
+                GetExtendedUdpTable(IntPtr.Zero, ref size, true, af, 1, 0);
                 IntPtr buf = Marshal.AllocHGlobal(size);
                 try
                 {
-                    uint rc = GetExtendedUdpTable(buf, ref size, true, 2, 1, 0);
+                    uint rc = GetExtendedUdpTable(buf, ref size, true, af, 1, 0);
                     if (rc == 122) continue; // buffer too small, table grew
                     if (rc != 0) return;
                     int n = Marshal.ReadInt32(buf);
                     IntPtr p = IntPtr.Add(buf, 4);
                     for (int i = 0; i < n; i++)
                     {
-                        uint raw = (uint)Marshal.ReadInt32(p, 4);
+                        uint raw = (uint)Marshal.ReadInt32(p, portOff);
                         int port = (int)(((raw & 0xFF) << 8) | ((raw >> 8) & 0xFF));
-                        int pid = Marshal.ReadInt32(p, 8);
+                        int pid = Marshal.ReadInt32(p, pidOff);
                         if (pids.Contains(pid)) into.Add(port);
-                        p = IntPtr.Add(p, 12);
+                        p = IntPtr.Add(p, rowSize);
                     }
                     return;
                 }
