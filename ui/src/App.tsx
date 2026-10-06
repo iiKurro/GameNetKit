@@ -1,6 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, Ban, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Play, Radar, RefreshCw, ShieldCheck, Square, Wifi, X } from "lucide-react";
-import { api, type BlockEntry, type GuardState, type Info, type RunSummary, type ServerResult, type State, type UpdateInfo } from "@/api";
+import { Activity, Ban, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Play, Radar, RefreshCw, ShieldCheck, Square, UserRound, Wifi, X } from "lucide-react";
+import { ProfileDialog } from "@/components/ProfileDialog";
+import { api, type BlockEntry, type GuardState, type Info, type Person, type Profile, type RunSummary, type ServerResult, type State, type UpdateInfo } from "@/api";
 import { makeT, type Lang, type Key } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { covers } from "@/lib/cidr";
@@ -44,6 +45,18 @@ export default function App() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [scanRows, setScanRows] = useState<RunSummary[]>([]);
   const [guard, setGuard] = useState<GuardState>({ running: false, games: [], applied: [] });
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [people, setPeople] = useState<Person[]>([]);
+  const [editName, setEditName] = useState(false);
+
+  const refreshPeople = useCallback(async () => {
+    setPeople(await api.people().catch(() => [] as Person[]));
+  }, []);
+
+  const saveName = useCallback(async (name: string) => {
+    const r = await api.profileSet(name).catch(() => null);
+    if (r && r.name) { setProfile(r); setEditName(false); }
+  }, []);
   const historyCount = Object.values(counts).reduce((a, b) => a + b, 0);
 
   const isBlocked = useCallback((ip: string) => blocks.some((b) => covers(b.ip, ip)), [blocks]);
@@ -63,6 +76,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    api.profile().then(setProfile).catch(() => {});
+    void refreshPeople();
     api.info().then((i) => {
       setInfo(i);
       setGame((g) => g || i.games.find((x) => x.enabled)?.name || "");
@@ -222,6 +237,11 @@ export default function App() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {profile && (
+            <Button variant="ghost" size="sm" onClick={() => setEditName(true)} title={t("profileEdit")}>
+              <UserRound /> {profile.name || t("profileTitle")}
+            </Button>
+          )}
           {guard.running && <Status variant="success" pulse title={t("guardText")}>{t("guardTitle")}</Status>}
           {updPhase === "checking" && <Status variant="info" pulse>{t("checking")}</Status>}
           {updPhase === "idle" && upd && !upd.error && !upd.hasUpdate && <Status variant="success">{t("upToDate")}</Status>}
@@ -291,10 +311,13 @@ export default function App() {
           t={t}
           games={info?.games.map((g) => g.name) ?? []}
           counts={counts}
+          me={profile ?? { name: "", id: "", suggested: "", dataDir: "" }}
+          people={people}
           isBlocked={isBlocked}
           onBlock={block}
           onUnblock={unblockFor}
           onChanged={refreshHistoryCount}
+          onPeopleChanged={refreshPeople}
         />
       )}
 
@@ -445,6 +468,18 @@ export default function App() {
             </div>
           </section>
         </main>
+      )}
+
+      <footer className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
+        <span className="min-w-0 break-all">{t("dataFolder")}: <span className="num" dir="ltr">{info?.dataDir ?? profile?.dataDir ?? ""}</span></span>
+        <Button variant="ghost" size="sm" onClick={() => api.openData()}>
+          <FolderOpen /> {t("openData")}
+        </Button>
+      </footer>
+
+      {/* first run (no name yet) or "change name" */}
+      {profile && (!profile.name || editName) && (
+        <ProfileDialog t={t} profile={profile} required={!profile.name} onSave={saveName} onClose={() => setEditName(false)} />
       )}
     </div>
   );
