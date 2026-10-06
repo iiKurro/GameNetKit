@@ -48,6 +48,28 @@ namespace GameNetKit
             return true;
         }
 
+        // Targets ("1.2.3.4" or "1.2.3.0/24") of every firewall rule this app created. Readable without admin.
+        public static List<string> ListTargets()
+        {
+            var res = new List<string>();
+            try
+            {
+                string o;
+                Powershell("(Get-NetFirewallRule -DisplayName '" + Prefix + "*' -ErrorAction SilentlyContinue).DisplayName", out o);
+                foreach (string line in o.Split('\n'))
+                {
+                    string n = line.Trim();
+                    if (!n.StartsWith(Prefix)) continue;
+                    string t = n.Substring(Prefix.Length).Trim();
+                    Match m = Regex.Match(t, @"^(\d{1,3}(?:\.\d{1,3}){3})-(\d{1,2})$");   // names use '-' instead of '/'
+                    if (m.Success) t = m.Groups[1].Value + "/" + m.Groups[2].Value;
+                    if (ValidIp(t) && !res.Contains(t)) res.Add(t);
+                }
+            }
+            catch { }
+            return res;
+        }
+
         static string Flat(string s) { return (s ?? "").Trim().Replace("\r", "").Replace("\n", " "); }
 
         // "34.165.0.0/16" -> "34.165.0.0-34.165.255.255"; a plain address is returned unchanged
@@ -111,6 +133,13 @@ namespace GameNetKit
                 string action = a["fw"];
                 string ip = a.ContainsKey("ip") ? a["ip"] : "";
                 Log("--- " + action + " " + ip);
+                if (action == "unblockall")
+                {
+                    string oa;
+                    int rca = Powershell("Get-NetFirewallRule -DisplayName '" + Prefix + "*' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction Stop", out oa);
+                    Log("remove all rc=" + rca + " " + Flat(oa));
+                    return rca;
+                }
                 if (!ValidIp(ip)) { Log("invalid target"); return 2; }
                 string o;
                 string name = RuleName(ip);
