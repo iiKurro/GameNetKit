@@ -73,6 +73,7 @@ export function SettingsPopover({ t, settings, busyKey, onChange, sync, onSyncTo
                       : !sync.enabled ? t("syncOff")
                       : sync.error === "code" ? t("syncErrCode")
                       : sync.error === "full" ? t("syncErrFull")
+                      : sync.error === "taken" ? t("syncErrTaken")
                       : sync.error === "player" ? t("syncErrPlayer")
                       : sync.error === "net" ? t("syncErrNet")
                       : sync.error ? t("syncErrServer")
