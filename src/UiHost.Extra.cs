@@ -1,4 +1,4 @@
-// UiHost part 2: blocked servers (firewall) and run history. C# 5 / .NET Framework 4.
+﻿// UiHost part 2: blocked servers (firewall) and run history. C# 5 / .NET Framework 4.
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -22,6 +22,12 @@ namespace GameNetKit
         static Dictionary<string, object> Fail(string err)
         {
             return new Dictionary<string, object> { { "ok", false }, { "error", err } };
+        }
+
+        static Dictionary<string, object> FwFail(string err, string why)
+        {
+            string detail = (why != "" ? why + "\n" : "") + Firewall.LastLog();
+            return new Dictionary<string, object> { { "ok", false }, { "error", err }, { "detail", detail } };
         }
 
         // ------------------------------------------------------------------ blocked servers
@@ -76,8 +82,8 @@ namespace GameNetKit
             {
                 int rc = RunElevated("--fw block --ip " + ip);
                 if (rc == -1) return Fail("uac");
-                if (rc != 0) return Fail("firewall");
-                if (!Firewall.IsActive(ip)) return Fail("firewall");
+                if (rc != 0) return FwFail("firewall", rc == -2 ? "timed out waiting for the admin prompt" : "exit code " + rc);
+                if (!Firewall.IsActive(ip)) return FwFail("firewall", "rule was added but could not be found afterwards");
             }
             var list = LoadBlocks().Where(b => (string)b["ip"] != ip).ToList();
             list.Add(new Dictionary<string, object>
@@ -99,7 +105,7 @@ namespace GameNetKit
             {
                 int rc = RunElevated("--fw unblock --ip " + ip);
                 if (rc == -1) return Fail("uac");
-                if (rc != 0) return Fail("firewall");
+                if (rc != 0) return FwFail("firewall", rc == -2 ? "timed out waiting for the admin prompt" : "exit code " + rc);
             }
             SaveBlocks(LoadBlocks().Where(b => (string)b["ip"] != ip).ToList());
             return Ok();
