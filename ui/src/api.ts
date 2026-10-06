@@ -1,4 +1,4 @@
-﻿export interface Game {
+export interface Game {
   name: string;
   process: string;
   enabled: boolean;
@@ -52,7 +52,7 @@ export interface BlockEntry {
   mode?: "always" | "game";
 }
 
-/** who uses this copy: a name you choose plus a random id (no server, no sign-in) */
+/** who uses this copy: a name you choose plus a random id (no account) */
 export interface Profile {
   name: string;
   id: string;
@@ -61,7 +61,7 @@ export interface Profile {
   dataDir: string;
 }
 
-/** a friend whose export file was imported; their scans are kept apart from mine */
+/** a friend of the group; their scans arrive automatically and are kept apart from mine */
 export interface Person {
   slug: string;
   name: string;
@@ -87,7 +87,7 @@ export interface SyncState {
   configured: boolean;
   hasCode: boolean;
   enabled: boolean;
-  /** "", "code" (wrong group code), "player", "net" (no connection), "server" */
+  /** "", "code" (wrong group code), "player", "full" (group is full), "net" (no connection), "server" */
   error: string;
   lastOkSecondsAgo: number;
   /** players known to the server (everyone who ever uploaded) */
@@ -147,7 +147,6 @@ const SLOW: Record<string, number> = {
   "/api/guard/start": 60000, "/api/guard/stop": 30000, "/api/guard/update": 180000, "/api/settings/set": 180000,
   "/api/update/check": 30000, "/api/update/apply": 180000,
   "/api/blocks": 60000, "/api/blocks/sync": 90000,
-  "/api/people/import": 90000, "/api/history/export": 60000, "/api/history/exportall": 60000,
 };
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -195,20 +194,16 @@ export const api = {
     call<Settings & { ok?: boolean; error?: string; detail?: string }>("/api/settings/set", patch),
   unblock: (ip: string) => call<{ ok: boolean; error?: string; detail?: string }>("/api/unblock", { ip }),
   // history is always per game: scans of different games are never mixed
-  // person = slug of an imported friend ("" = my own scans)
+  // person = slug of a friend of the group ("" = my own scans)
   history: (game: string, person = "") => call<RunSummary[]>("/api/history", { game, person }),
   historyCounts: () => call<Record<string, number>>("/api/history/counts"),
   historyGet: (game: string, id: string, person = "") => call<Run>("/api/history/get", { game, id, person }),
   historyDelete: (game: string, id: string, person = "") => call<{ ok: boolean }>("/api/history/delete", { game, id, person }),
   historyClear: (game: string, person = "") => call<{ ok: boolean }>("/api/history/clear", { game, person }),
-  historyExport: (game: string) => call<{ ok: boolean; path: string; count: number }>("/api/history/export", { game }),
-  historyExportAll: () => call<{ ok: boolean; path: string; count: number; games: number; error?: string }>("/api/history/exportall", {}),
   profile: () => call<Profile>("/api/profile"),
   profileSet: (name: string) => call<Profile & { ok?: boolean; error?: string }>("/api/profile/set", { name }),
   people: () => call<Person[]>("/api/people"),
-  peopleImport: (content: string) => call<{ ok: boolean; name?: string; runs?: number; slug?: string; error?: string }>("/api/people/import", { content }),
   peopleDelete: (slug: string) => call<{ ok: boolean }>("/api/people/delete", { slug }),
-  openData: () => call<{ ok: boolean }>("/api/opendata", {}),
   blocksSync: () => call<BlockEntry[]>("/api/blocks/sync", {}),
   unblockAll: () => call<{ ok: boolean; error?: string; detail?: string }>("/api/unblockall", {}),
 };
