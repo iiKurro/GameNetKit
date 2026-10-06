@@ -196,6 +196,21 @@ namespace GameNetKit
         bool GuardRunning() { return (bool)((Dictionary<string, object>)GuardState())["running"]; }
 
         // starts the guard (UAC prompt, no waiting for it to end). "" = running, otherwise an error code.
+        // The guard runs from a copy named GameNetKit-Guard.exe (so Task Manager tells the two parts apart). If the copy is in use
+        // by a running guard it is simply kept; otherwise it is refreshed from this exe.
+        string GuardLaunchPath()
+        {
+            try
+            {
+                string dir = Path.Combine(Program.DataDir, "bin");
+                Directory.CreateDirectory(dir);
+                string dst = Path.Combine(dir, GuardInstall.GuardFileName);
+                try { File.Copy(exePath, dst, true); } catch (IOException) { }
+                return File.Exists(dst) ? dst : exePath;
+            }
+            catch { return exePath; }
+        }
+
         // remember = the user asked for it, so it is also started automatically the next time the app opens.
         // With the "start with Windows" task installed the guard starts silently; otherwise Windows shows its admin prompt.
         string StartGuard(bool remember)
@@ -210,7 +225,7 @@ namespace GameNetKit
             {
                 try
                 {
-                    var psi = new ProcessStartInfo(exePath, "--guard 1" + (Demo ? " --demo 1" : "")) { UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden };
+                    var psi = new ProcessStartInfo(GuardLaunchPath(), "--guard 1" + (Demo ? " --demo 1" : "")) { UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden };
                     if (!Demo) psi.Verb = "runas";
                     Process.Start(psi);
                 }
