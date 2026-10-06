@@ -1,6 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, Ban, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Play, Radar, RefreshCw, ShieldCheck, Square, Wifi, X } from "lucide-react";
-import { api, type BlockEntry, type Info, type ServerResult, type State, type UpdateInfo } from "@/api";
+import { api, type BlockEntry, type Info, type RunSummary, type ServerResult, type State, type UpdateInfo } from "@/api";
 import { makeT, type Lang, type Key } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { covers } from "@/lib/cidr";
@@ -8,6 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Status } from "@/components/ui/status";
 import { VerticalStepper } from "@/components/ui/stepper";
 import { ResultCard, locationOf } from "@/components/ResultCard";
+import { Suggestions } from "@/components/Suggestions";
+import { Skeleton, ServerCardSkeleton } from "@/components/ui/skeleton";
+import { rangeStats, suggestions } from "@/lib/stats";
 import { HistoryView } from "@/views/History";
 import { BlockedView } from "@/views/Blocked";
 
@@ -39,6 +42,7 @@ export default function App() {
   const [blocks, setBlocks] = useState<BlockEntry[]>([]);
   const [fwError, setFwError] = useState("");
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [scanRows, setScanRows] = useState<RunSummary[]>([]);
   const historyCount = Object.values(counts).reduce((a, b) => a + b, 0);
 
   const isBlocked = useCallback((ip: string) => blocks.some((b) => covers(b.ip, ip)), [blocks]);
@@ -71,7 +75,12 @@ export default function App() {
   }, [refreshBlocks, refreshHistoryCount]);
 
   // a finished scan adds a history entry
-  useEffect(() => { if (state.phase === "done") void refreshHistoryCount(); }, [state.phase, refreshHistoryCount]);
+  // a finished scan adds a history entry; the same history feeds the "this range keeps being bad" suggestion
+  useEffect(() => {
+    if (state.phase !== "done") return;
+    void refreshHistoryCount();
+    api.history(state.game).then(setScanRows).catch(() => {});
+  }, [state.phase, state.game, refreshHistoryCount]);
 
   const checkUpdate = useCallback(async () => {
     setUpdPhase("checking");
@@ -278,6 +287,7 @@ export default function App() {
             <div>
               <div className="mb-2 text-xs font-medium text-muted-foreground">{t("chooseGame")}</div>
               <div className="grid gap-2">
+                {!info && (<><Skeleton className="h-11 w-full" /><Skeleton className="h-11 w-full" /></>)}
                 {info?.games.filter((g) => g.enabled).map((g) => (
                   <button
                     key={g.name}
@@ -302,8 +312,8 @@ export default function App() {
                 </Button>
               )}
               {p === "ready" && (
-                <Button size="lg" onClick={() => api.begin()}>
-                  <Activity /> {t("begin")}
+                <Button size="lg" variant="outline" onClick={() => api.begin()}>
+                  <Activity /> {t("beginManual")}
                 </Button>
               )}
               {running && (
@@ -349,6 +359,11 @@ export default function App() {
                     <FolderOpen /> {t("openFolder")}
                   </Button>
                 </div>
+                <Suggestions
+                  t={t}
+                  items={suggestions(rangeStats(scanRows), isBlocked)}
+                  onBlock={(s, target) => block(s, state.game, target)}
+                />
                 <VerdictBanner best={best} t={t} />
                 <div className="grid gap-4 md:grid-cols-2">
                   {state.results.map((s, i) => (
@@ -367,7 +382,14 @@ export default function App() {
               </>
             )}
 
-            {(p === "idle" || running) && (
+            {(p === "analyzing" || p === "measuring") && (
+              <div className="grid gap-4 md:grid-cols-2" aria-live="polite">
+                <ServerCardSkeleton />
+                <ServerCardSkeleton />
+              </div>
+            )}
+
+            {(p === "idle" || (running && p !== "analyzing" && p !== "measuring")) && (
               <div className="enter flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border p-10 text-center">
                 <div className="flex size-12 items-center justify-center rounded-full bg-accent text-muted-foreground">
                   <Activity className="size-6" />
