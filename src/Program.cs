@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.7.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "0.8.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -47,6 +47,8 @@ namespace GameNetKit
             if (args.ContainsKey("worker")) return Worker.Run(args);
             if (args.ContainsKey("fw")) return Firewall.Run(args);
             if (args.ContainsKey("guard")) return Guard.Run();
+            if (args.ContainsKey("install-guard")) return GuardInstall.Install(args);
+            if (args.ContainsKey("uninstall-guard")) return GuardInstall.Uninstall();
             if (args.ContainsKey("selftest")) return SelfTest();
             return new UiHost(args).Run();
         }
@@ -177,6 +179,15 @@ namespace GameNetKit
                 var thread = new Thread(Serve) { IsBackground = true };
                 thread.Start();
 
+                // remembered choice: the guard comes back by itself (silently with the sign-in task, otherwise with Windows' admin prompt)
+                if (Setting("guardAuto"))
+                    ThreadPool.QueueUserWorkItem(delegate
+                    {
+                        Thread.Sleep(2500);
+                        try { if (!GuardRunning()) { string why = StartGuard(false); if (why != "") Program.Log("guard auto-start failed: " + why); } }
+                        catch (Exception e) { Program.Log("guard auto-start error: " + e.Message); }
+                    });
+
                 // windows left over from an earlier run still point at a dead server (that is the "frozen window"): close them first
                 bool useWindow = !args.ContainsKey("nowindow");
                 if (useWindow) KillStaleWindows();
@@ -219,6 +230,8 @@ namespace GameNetKit
                     }
                 }
                 Program.Log("server stopped: " + reason);
+                // "background" off = nothing may keep running once the window is gone, so the guard goes too (and comes back next time if it is remembered)
+                if (!Setting("background")) { StopGuard(); Program.Log("guard stopped because background mode is off"); }
                 try { listener.Stop(); } catch { }
                 try { File.Delete(Path.Combine(Program.DataDir, "port.txt")); } catch { }
             }
@@ -337,6 +350,9 @@ namespace GameNetKit
                     case "/api/opendata": OpenData(); result = Ok(); break;
                     case "/api/blocks": result = Blocks(); break;
                     case "/api/blocks/sync": result = SyncBlocks(); break;
+                    case "/api/settings": result = SettingsGet(); break;
+                    case "/api/settings/set": result = SettingsSet(ReadBody(ctx)); break;
+                    case "/api/guard/update": result = GuardInstallUpdate(); break;
                     case "/api/guard": result = GuardState(); break;
                     case "/api/guard/start": result = GuardStart(); break;
                     case "/api/guard/stop": result = GuardStop(); break;
