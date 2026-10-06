@@ -16,7 +16,7 @@ $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
     /win32manifest:"$root\src\app.manifest" `
     /resource:"$ui\dist\index.html,ui.html" `
     /reference:System.Web.Extensions.dll /reference:System.Core.dll `
-    "$root\src\Program.cs" "$root\src\Worker.cs" "$root\src\Analyzer.cs"
+    "$root\src\Program.cs" "$root\src\UiHost.Extra.cs" "$root\src\Worker.cs" "$root\src\Analyzer.cs" "$root\src\Firewall.cs"
 if ($LASTEXITCODE -ne 0) { throw 'csc failed' }
 Copy-Item "$root\games.json", "$root\config.json" $dist -Force
 Get-ChildItem $dist | Select-Object Name, Length
