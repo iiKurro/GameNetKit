@@ -1,4 +1,4 @@
-export interface Game {
+﻿export interface Game {
   name: string;
   process: string;
   enabled: boolean;
@@ -35,6 +35,28 @@ export interface ServerResult {
   jitter: number | null;
   loss: number;
   verdict: "good" | "ok" | "bad" | "noreply";
+}
+
+export interface BlockEntry {
+  ip: string;
+  label: string;
+  game: string;
+  time: string;
+}
+
+export interface RunSummary {
+  id: string;
+  time: string;
+  game: string;
+  count: number;
+  best: ServerResult | null;
+}
+
+export interface Run {
+  id: string;
+  time: string;
+  game: string;
+  results: ServerResult[];
 }
 
 export interface State {
@@ -79,4 +101,11 @@ export const api = {
   checkUpdate: () => call<UpdateInfo>("/api/update/check"),
   applyUpdate: () => call<{ ok: boolean; error?: string }>("/api/update/apply", {}),
   heartbeat: () => call<{ ok: boolean }>("/api/heartbeat", {}),
+  blocks: () => call<BlockEntry[]>("/api/blocks"),
+  block: (ip: string, label: string, game: string) => call<{ ok: boolean; error?: string }>("/api/block", { ip, label, game }),
+  unblock: (ip: string) => call<{ ok: boolean; error?: string }>("/api/unblock", { ip }),
+  history: () => call<RunSummary[]>("/api/history"),
+  historyGet: (id: string) => call<Run>("/api/history/get", { id }),
+  historyDelete: (id: string) => call<{ ok: boolean }>("/api/history/delete", { id }),
+  historyClear: () => call<{ ok: boolean }>("/api/history/clear", {}),
 };
