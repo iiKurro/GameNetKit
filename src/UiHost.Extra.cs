@@ -249,7 +249,7 @@ namespace GameNetKit
             return slug;
         }
 
-        string HistoryDirFor(string slug) { return Path.Combine(HistoryRoot, slug); }
+        string HistoryDirFor(string slug, string person = "") { return person == "" ? Path.Combine(HistoryRoot, slug) : Path.Combine(PeopleRoot, person, slug); }
         string ResultsDirFor(string slug) { return Path.Combine(ResultsRoot, slug); }
 
         Dictionary<string, object> LoadRun(string file)
@@ -263,7 +263,7 @@ namespace GameNetKit
             string slug = SlugOf(body);
             Migrate();
             var rows = new List<Dictionary<string, object>>();
-            string dir = HistoryDirFor(slug);
+            string dir = HistoryDirFor(slug, PersonOf(body));
             if (!Directory.Exists(dir)) return rows;
             foreach (string f in Directory.GetFiles(dir, "*.json").OrderByDescending(x => x))
             {
@@ -297,7 +297,7 @@ namespace GameNetKit
         {
             string id = Convert.ToString(body["id"]);
             if (!SafeId(id)) return Fail("bad id");
-            string f = Path.Combine(HistoryDirFor(SlugOf(body)), id + ".json");
+            string f = Path.Combine(HistoryDirFor(SlugOf(body), PersonOf(body)), id + ".json");
             if (!File.Exists(f)) return Fail("not found");
             return LoadRun(f);
         }
@@ -312,7 +312,8 @@ namespace GameNetKit
         {
             string id = Convert.ToString(body["id"]);
             if (!SafeId(id)) return Fail("bad id");
-            DeleteRun(SlugOf(body), id);
+            if (PersonOf(body) != "") { try { File.Delete(Path.Combine(HistoryDirFor(SlugOf(body), PersonOf(body)), id + ".json")); } catch { } }
+            else DeleteRun(SlugOf(body), id);
             return Ok();
         }
 
@@ -320,12 +321,25 @@ namespace GameNetKit
         object HistoryClear(Dictionary<string, object> body)
         {
             string slug = SlugOf(body);
+            string person = PersonOf(body);
+            if (person != "")
+            {
+                string pd = HistoryDirFor(slug, person);
+                if (Directory.Exists(pd)) foreach (string pf in Directory.GetFiles(pd, "*.json")) { try { File.Delete(pf); } catch { } }
+                return Ok();
+            }
             string hd = HistoryDirFor(slug), rd = ResultsDirFor(slug);
             if (Directory.Exists(hd))
                 foreach (string f in Directory.GetFiles(hd, "*.json")) DeleteRun(slug, Path.GetFileNameWithoutExtension(f));
             if (Directory.Exists(rd))
                 foreach (string f in Directory.GetFiles(rd, "*.csv")) { try { File.Delete(f); } catch { } }
             return Ok();
+        }
+
+        object ExportPlayer()
+        {
+            var me = ReadProfile();
+            return me == null ? null : new Dictionary<string, object> { { "name", me["name"] }, { "id", me["id"] } };
         }
 
         // Writes every saved run of ONE game into one JSON file (server IPs and ping numbers only) and shows it in Explorer.
@@ -348,6 +362,7 @@ namespace GameNetKit
             var doc = new Dictionary<string, object>
             {
                 { "app", "GameNetKit" }, { "version", Program.Version }, { "game", game },
+                { "player", ExportPlayer() },
                 { "exported", DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) }, { "runs", runs }
             };
             File.WriteAllText(path, js.Serialize(doc), new UTF8Encoding(false));
