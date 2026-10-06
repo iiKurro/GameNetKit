@@ -43,10 +43,19 @@ export interface ServerResult {
   via?: string;
 }
 
+export interface AdminRun {
+  id: string;
+  game: string;
+  time: string;
+  best: { ip: string; country?: string; city?: string; avg: number | null; verdict: string } | null;
+}
+
 export interface AdminPlayer {
   id: string;
   name: string;
   total: number;
+  /** the admin reset this account: the next login with its name chooses a new password */
+  reset?: boolean;
   games: { game: string; count: number; last: string }[];
 }
 
@@ -98,7 +107,7 @@ export interface SyncState {
   configured: boolean;
   hasCode: boolean;
   enabled: boolean;
-  /** "", "code" (wrong group code), "player", "full" (group is full), "net" (no connection), "server" */
+  /** "", "code" (wrong group code), "player" (password does not match), "taken" (name belongs to another account), "full", "net" (no connection), "server" */
   error: string;
   lastOkSecondsAgo: number;
   /** players known to the server (everyone who ever uploaded) */
@@ -107,6 +116,8 @@ export interface SyncState {
   busy: boolean;
   /** this PC has the group admin code unlocked */
   admin?: boolean;
+  /** the account has a password (can be logged into from any PC) */
+  hasPassword?: boolean;
 }
 
 export interface GuardState {
@@ -159,7 +170,7 @@ const SLOW: Record<string, number> = {
   "/api/block": 120000, "/api/unblock": 120000, "/api/unblockall": 120000,
   "/api/guard/start": 60000, "/api/guard/stop": 30000, "/api/guard/update": 180000, "/api/settings/set": 180000,
   "/api/update/check": 30000, "/api/update/apply": 180000,
-  "/api/blocks": 60000, "/api/blocks/sync": 90000, "/api/admin/unlock": 40000, "/api/admin/players": 40000, "/api/admin/delete": 40000,
+  "/api/blocks": 60000, "/api/blocks/sync": 90000, "/api/account/start": 60000, "/api/account/password": 60000, "/api/admin/reset": 40000, "/api/admin/unlock": 40000, "/api/admin/players": 40000, "/api/admin/delete": 40000,
 };
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -200,12 +211,17 @@ export const api = {
   guardStop: () => call<{ ok: boolean }>("/api/guard/stop", {}),
   syncState: () => call<SyncState>("/api/sync/state"),
   syncConfig: (patch: { code?: string; enabled?: boolean }) => call<SyncState & { ok?: boolean; error?: string }>("/api/sync/config", patch),
+  /** account = name + password: first run (restores the account when the name and password already exist on the server) */
+  accountStart: (name: string, password: string, code: string) => call<{ ok: boolean; restored?: boolean; error?: string }>("/api/account/start", { name, password, code }),
+  accountPassword: (password: string) => call<{ ok: boolean; error?: string }>("/api/account/password", { password }),
   syncNow: () => call<{ ok: boolean }>("/api/sync/now", {}),
   /** group admin (hidden, Ctrl+Shift+A): only works with the admin code */
   adminUnlock: (code: string) => call<{ ok: boolean; error?: string }>("/api/admin/unlock", { code }),
+  adminReset: (player: string) => call<{ ok: boolean; error?: string }>("/api/admin/reset", { player }),
   adminLock: () => call<{ ok: boolean }>("/api/admin/lock", {}),
   adminPlayers: () => call<{ players?: AdminPlayer[]; ok?: boolean; error?: string }>("/api/admin/players"),
-  adminDelete: (player: string, game = "") => call<{ ok: boolean; removed?: number; error?: string }>("/api/admin/delete", { player, game }),
+  adminRuns: (player: string) => call<{ runs?: AdminRun[]; ok?: boolean; error?: string }>("/api/admin/runs", { player }),
+  adminDelete: (player: string, game = "", run = "") => call<{ ok: boolean; removed?: number; error?: string }>("/api/admin/delete", { player, game, run }),
   guardUpdate: () => call<{ ok: boolean; error?: string; detail?: string }>("/api/guard/update", {}),
   settings: () => call<Settings>("/api/settings"),
   settingsSet: (patch: Partial<Pick<Settings, "guardAuto" | "background" | "startup">>) =>
