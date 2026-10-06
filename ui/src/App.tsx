@@ -1,7 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, Ban, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Play, Radar, RefreshCw, ShieldCheck, Square, UserRound, Wifi, X } from "lucide-react";
+import { Activity, Ban, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Lightbulb, Play, Radar, RefreshCw, ShieldCheck, Square, UserRound, Wifi, X } from "lucide-react";
 import { ProfileDialog } from "@/components/ProfileDialog";
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import { AnimatedTabs } from "@/components/ui/animated-tabs";
 import { SettingsPopover } from "@/components/SettingsPopover";
 import { api, type BlockEntry, type GuardState, type Info, type Person, type Profile, type RunSummary, type Settings, type ServerResult, type State, type UpdateInfo } from "@/api";
@@ -13,6 +13,8 @@ import { Status } from "@/components/ui/status";
 import { VerticalStepper } from "@/components/ui/stepper";
 import { ResultCard, locationOf } from "@/components/ResultCard";
 import { Suggestions } from "@/components/Suggestions";
+import { InsightsView } from "@/views/Insights";
+import { buildInsight, type Source } from "@/lib/insights";
 import { Skeleton, ServerCardSkeleton } from "@/components/ui/skeleton";
 import { rangeStats, suggestions } from "@/lib/stats";
 import { HistoryView } from "@/views/History";
@@ -23,7 +25,7 @@ const EMPTY: State = {
   error: "", errorCode: "", results: [], csvPath: "",
 };
 
-type Tab = "scan" | "history" | "blocked";
+type Tab = "scan" | "history" | "insights" | "blocked";
 
 function loadLang(): Lang {
   try {
@@ -66,6 +68,33 @@ export default function App() {
   const historyCount = Object.values(counts).reduce((a, b) => a + b, 0);
 
   const isBlocked = useCallback((ip: string) => blocks.some((b) => covers(b.ip, ip)), [blocks]);
+
+  // Everybody's scans, per game (mine + imported friends), loaded again whenever any history changes.
+  const [sources, setSources] = useState<Record<string, Source[]> | null>(null);
+  const historyKey = JSON.stringify(counts) + "|" + people.map((p) => `${p.slug}:${p.total}`).join(",") + "|" + (profile?.name ?? "");
+  const gameNames = info?.games.map((g) => g.name) ?? [];
+  const gameKey = gameNames.join(",");
+  useEffect(() => {
+    if (!gameKey || !profile) return;
+    let alive = true;
+    (async () => {
+      const out: Record<string, Source[]> = {};
+      await Promise.all(gameKey.split(",").map(async (g) => {
+        const mine = await api.history(g, "").catch(() => [] as RunSummary[]);
+        const others = await Promise.all(people.map(async (p) => ({ name: p.name, isMe: false, rows: await api.history(g, p.slug).catch(() => [] as RunSummary[]) })));
+        out[g] = [{ name: profile.name || "—", isMe: true, rows: mine }, ...others];
+      }));
+      if (alive) setSources(out);
+    })();
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameKey, historyKey]);
+  const insights = useMemo(
+    () => (sources ? gameNames.map((g) => buildInsight(g, sources[g] ?? [], isBlocked)) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sources, isBlocked, gameKey],
+  );
+  const suggestionCount = insights ? insights.reduce((n, g) => n + g.suggestions.length, 0) : 0;
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -269,6 +298,7 @@ export default function App() {
   const tabs: { id: Tab; label: string; icon: typeof Radar; count?: number }[] = [
     { id: "scan", label: t("tabScan"), icon: Radar },
     { id: "history", label: t("tabHistory"), icon: HistoryIcon, count: historyCount },
+    { id: "insights", label: t("tabInsights"), icon: Lightbulb, count: suggestionCount },
     { id: "blocked", label: t("tabBlocked"), icon: Ban, count: blocks.length },
   ];
 
@@ -368,14 +398,13 @@ export default function App() {
         </div>
       )}
 
-      {/* a short cross-fade carries the eye from one section to the next (continuity, not decoration) */}
-      <AnimatePresence mode="wait" initial={false}>
+      {/* the new section is mounted at once and eases in (continuity). No "wait for the old one to leave": if an animation ever
+          stalls (minimized window), the content must still be there and usable. */}
       <motion.div
         key={tab}
         className="flex flex-1 flex-col gap-5"
-        initial={{ opacity: 0, y: 6 }}
+        initial={{ opacity: 0.2, y: 6 }}
         animate={{ opacity: 1, y: 0, transition: { duration: 0.18, ease: [0.16, 1, 0.3, 1] } }}
-        exit={{ opacity: 0, transition: { duration: 0.09 } }}
       >
       {tab === "history" && (
         <HistoryView
@@ -389,6 +418,16 @@ export default function App() {
           onUnblock={unblockFor}
           onChanged={refreshHistoryCount}
           onPeopleChanged={refreshPeople}
+        />
+      )}
+
+      {tab === "insights" && (
+        <InsightsView
+          t={t}
+          insights={insights}
+          peopleCount={people.length}
+          onBlock={(s, game, range) => block(s, game, range, true)}
+          onGoImport={() => setTab("history")}
         />
       )}
 
@@ -541,7 +580,6 @@ export default function App() {
         </main>
       )}
       </motion.div>
-      </AnimatePresence>
 
       <footer className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
         <span className="min-w-0 break-all">{t("dataFolder")}: <span className="num" dir="ltr">{info?.dataDir ?? profile?.dataDir ?? ""}</span></span>
