@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { MonitorUp, Moon, Settings2, ShieldCheck } from "lucide-react";
-import type { Settings } from "@/api";
+import { Cloud, KeyRound, MonitorUp, Moon, Settings2, ShieldCheck } from "lucide-react";
+import type { Settings, SyncState } from "@/api";
 import type { Key } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -15,10 +15,14 @@ interface Props {
   /** which row is waiting for an answer (an admin prompt can take a while) */
   busyKey: string;
   onChange: (key: "guardAuto" | "background" | "startup", value: boolean) => void;
+  /** sharing with the group (null until the first answer) */
+  sync: SyncState | null;
+  onSyncToggle: (enabled: boolean) => void;
+  onChangeCode: () => void;
 }
 
 /** Start-up choices, kept in one small panel in the header so they are one click away but never in the way. */
-export function SettingsPopover({ t, settings, busyKey, onChange }: Props) {
+export function SettingsPopover({ t, settings, busyKey, onChange, sync, onSyncToggle, onChangeCode }: Props) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const reduce = useReducedMotion();
@@ -55,6 +59,40 @@ export function SettingsPopover({ t, settings, busyKey, onChange }: Props) {
             style={{ transformOrigin: "top" }}
             className="absolute end-0 top-full z-40 mt-2 w-[min(92vw,390px)] rounded-xl border border-border bg-card p-2 shadow-[0_12px_32px_rgba(0,0,0,0.45)]"
           >
+            {sync?.configured && (
+              <div className="flex items-start gap-3 border-b border-border p-3">
+                <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                  <Cloud className="size-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div id="set-sync" className="text-sm font-medium">{t("syncTitle")}</div>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("syncDesc")}</p>
+                  <p className={cn("mt-2 text-xs", sync.error ? "text-warning" : "text-muted-foreground")}>
+                    {!sync.hasCode ? t("syncNoCode")
+                      : sync.error === "code" ? t("syncErrCode")
+                      : sync.error === "player" ? t("syncErrPlayer")
+                      : sync.error === "net" ? t("syncErrNet")
+                      : sync.error ? t("syncErrServer")
+                      : sync.lastOkSecondsAgo < 0 ? t("checking")
+                      : (
+                        <>
+                          <span className="text-success">{t("syncOk")}</span> · {t("syncAgo")} <span className="num">{sync.lastOkSecondsAgo}</span> {t("syncSec")} ·{" "}
+                          <span className="num">{sync.players}</span> {t("syncPlayers")} · <span className="num">{sync.uploaded}</span> {t("syncUploaded")}
+                        </>
+                      )}
+                  </p>
+                  <Button className="mt-2" variant="outline" size="sm" onClick={() => { setOpen(false); onChangeCode(); }}>
+                    <KeyRound /> {sync.hasCode ? t("syncChangeCode") : t("syncEnterCode")}
+                  </Button>
+                </div>
+                <Switch
+                  checked={sync.enabled}
+                  disabled={!sync.hasCode}
+                  aria-labelledby="set-sync"
+                  onChange={(v) => onSyncToggle(v)}
+                />
+              </div>
+            )}
             <ul className="flex flex-col">
               {rows.map((r, i) => {
                 const Icon = r.icon;
