@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, Ban, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Lightbulb, Play, Radar, RefreshCw, ShieldCheck, Square, UserRound, X } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { ProfileDialog } from "@/components/ProfileDialog";
+import { AdminPanel } from "@/components/AdminPanel";
 import { motion } from "motion/react";
 import { AnimatedTabs } from "@/components/ui/animated-tabs";
 import { SettingsPopover } from "@/components/SettingsPopover";
@@ -62,6 +63,15 @@ export default function App() {
   // first run: asked for the name (and the group code) once; stays open until everything was accepted
   const [firstRun, setFirstRun] = useState(false);
   const firstRunSeen = useRef(false);
+  // the hidden group-admin panel (Ctrl+Shift+A)
+  const [adminOpen, setAdminOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === "A" || e.key === "a")) { e.preventDefault(); setAdminOpen(true); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [sync, setSync] = useState<SyncState | null>(null);
   const [lost, setLost] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -125,13 +135,6 @@ export default function App() {
     const s = await api.syncConfig({ enabled }).catch(() => null);
     if (s) setSync(s);
   }, []);
-  const deleteMine = useCallback(async (): Promise<string> => {
-    const r = await api.syncDeleteMine().catch(() => null);
-    if (!r) return t("syncDelFail");
-    if (!r.ok) return r.error === "player" ? t("syncErrPlayer") : r.error === "code" ? t("syncErrCode") : r.error === "net" ? t("syncErrNet") : t("syncDelFail");
-    void refreshSync();
-    return "";
-  }, [t, refreshSync]);
   const historyCount = Object.values(counts).reduce((a, b) => a + b, 0);
 
   const isBlocked = useCallback((ip: string) => blocks.some((b) => covers(b.ip, ip)), [blocks]);
@@ -399,7 +402,7 @@ export default function App() {
   useEffect(() => {
     if (profile && !profile.name && !firstRunSeen.current) { firstRunSeen.current = true; setFirstRun(true); }
   }, [profile]);
-  const modalOpen = firstRun || dialog !== null;
+  const modalOpen = firstRun || dialog !== null || adminOpen;
 
   // what the header chip says when sharing has a problem (the details are in Settings)
   const syncChipText = (s: SyncState) =>
@@ -454,7 +457,6 @@ export default function App() {
                 sync={sync}
                 onSyncToggle={toggleSync}
                 onChangeCode={() => setDialog("code")}
-                onDeleteMine={deleteMine}
               />
             )}
           </div>
@@ -713,6 +715,10 @@ export default function App() {
         )}
         </motion.div>
       </div>
+
+      {adminOpen && sync?.configured && (
+        <AdminPanel t={t} unlocked={!!sync?.admin} onUnlocked={() => void refreshSync()} onLocked={() => void refreshSync()} onClose={() => setAdminOpen(false)} />
+      )}
 
       {/* first run (no name yet) or "change name": outside the page, which is inert while this is open */}
       {profile && (firstRun || dialog) && (
