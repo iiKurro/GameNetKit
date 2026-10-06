@@ -2,7 +2,7 @@
 //   - every finished scan is uploaded as soon as the loop notices it (the window also pokes the loop right after a scan)
 //   - every ~10 s the app asks the server for scans newer than the last one it saw and files them under People\<name>_<id>
 //     (my own scans that come back, e.g. after a reinstall, are restored into my History)
-// The group code and this PC's player secret are stored encrypted for the current Windows user (DPAPI) in sync.json.
+// The group code and this PC's random player secret are stored encrypted for the current Windows user (DPAPI) in sync.json.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -24,6 +24,7 @@ namespace GameNetKit
         DateTime syncLastOk = DateTime.MinValue;
         int syncPlayers;
         bool syncBusy;
+        int syncDenied;   // consecutive "this player id belongs to someone else" answers
 
         // ------------------------------------------------------------------ stored settings
         static string Protect(string s)
@@ -37,12 +38,20 @@ namespace GameNetKit
             catch { return ""; }
         }
 
+        static string RandomHex(int bytes)
+        {
+            var b = new byte[bytes];
+            using (var r = RandomNumberGenerator.Create()) r.GetBytes(b);
+            return BitConverter.ToString(b).Replace("-", "").ToLowerInvariant();
+        }
+
         class SyncCfg
         {
             public bool Enabled;
             public string Server = "";
             public string Code = "";
             public string Secret = "";
+            public string Legacy = "";   // the secret version 1.0.0 derived from the code; sent only to upgrade an older registration
             public long Cursor;
             public HashSet<string> Pushed = new HashSet<string>();
         }
@@ -80,7 +89,22 @@ namespace GameNetKit
                     { "enabled", c.Enabled }, { "code", c.Code == "" ? "" : Protect(c.Code) }, { "secret", c.Secret == "" ? "" : Protect(c.Secret) },
                     { "cursor", c.Cursor }, { "pushed", c.Pushed.ToList() }
                 };
-                File.WriteAllText(SyncPath, js.Serialize(d), new UTF8Encoding(false));
+                string tmp = SyncPath + ".tmp";
+                File.WriteAllText(tmp, js.Serialize(d), new UTF8Encoding(false));
+                if (File.Exists(SyncPath)) File.Replace(tmp, SyncPath, null); else File.Move(tmp, SyncPath);
+            }
+        }
+
+        // The loop works on a snapshot for up to a minute. When it is done only what it learned (cursor, uploaded ids, secret) is merged
+        // into the file as it is NOW, so a code or switch the user changed meanwhile is never overwritten; a different code drops the result.
+        void MergeSync(SyncCfg c)
+        {
+            lock (syncLock)
+            {
+                var cur = LoadSync();
+                if (cur.Code != c.Code) return;
+                cur.Cursor = c.Cursor; cur.Secret = c.Secret; cur.Pushed = c.Pushed;
+                SaveSync(cur);
             }
         }
 
@@ -103,21 +127,24 @@ namespace GameNetKit
 
         object SyncConfigure(Dictionary<string, object> body)
         {
-            var c = LoadSync();
-            if (body.ContainsKey("code"))
+            lock (syncLock)
             {
-                string code = Convert.ToString(body["code"]).Trim();
-                if (code.Length > 80) return Fail("bad code");
-                if (code != c.Code)
+                var c = LoadSync();
+                if (body.ContainsKey("code"))
                 {
-                    // another group: start from scratch (everything is uploaded to it, and its history is fetched from the beginning)
-                    c.Code = code; c.Cursor = 0; c.Pushed.Clear();
-                    syncError = ""; syncLastOk = DateTime.MinValue;
+                    string code = Convert.ToString(body["code"]).Trim();
+                    if (code.Length > 80) return Fail("bad code");
+                    if (code != c.Code)
+                    {
+                        // another group: start from scratch (everything is uploaded to it, and its history is fetched from the beginning)
+                        c.Code = code; c.Cursor = 0; c.Pushed.Clear();
+                        syncError = ""; syncLastOk = DateTime.MinValue; syncDenied = 0;
+                    }
+                    if (code != "") c.Enabled = true;
                 }
-                if (code != "") c.Enabled = true;
+                if (body.ContainsKey("enabled") && body["enabled"] is bool) c.Enabled = (bool)body["enabled"];
+                SaveSync(c);
             }
-            if (body.ContainsKey("enabled") && body["enabled"] is bool) c.Enabled = (bool)body["enabled"];
-            SaveSync(c);
             syncWake.Set();
             return SyncState();
         }
@@ -144,23 +171,23 @@ namespace GameNetKit
         // one HTTP call; returns the parsed JSON object, or throws a SyncException with a short code
         class SyncException : Exception { public string Code; public SyncException(string code, string msg) : base(msg) { Code = code; } }
 
-        Dictionary<string, object> Call(SyncCfg c, string method, string path, string playerId, object body)
+        Dictionary<string, object> Call(SyncCfg c, string method, string path, object body)
         {
-            var req = (HttpWebRequest)WebRequest.Create(c.Server.TrimEnd('/') + path);
-            req.Method = method;
-            req.Timeout = 20000;
-            req.UserAgent = "GameNetKit/" + Program.Version;
-            req.Headers["x-group"] = c.Code;
-            req.Headers["x-player-secret"] = c.Secret;
-            if (playerId != null) req.Headers["x-player"] = playerId;
-            if (body != null)
-            {
-                byte[] data = Encoding.UTF8.GetBytes(js.Serialize(body));
-                req.ContentType = "application/json";
-                using (var rs = req.GetRequestStream()) rs.Write(data, 0, data.Length);
-            }
             try
             {
+                var req = (HttpWebRequest)WebRequest.Create(c.Server.TrimEnd('/') + path);
+                req.Method = method;
+                req.Timeout = 20000;
+                req.UserAgent = "GameNetKit/" + Program.Version;
+                req.Headers["x-group"] = c.Code;
+                req.Headers["x-player-secret"] = c.Secret;
+                if (c.Legacy != "" && method == "POST") req.Headers["x-player-upgrade"] = c.Legacy;
+                if (body != null)
+                {
+                    byte[] data = Encoding.UTF8.GetBytes(js.Serialize(body));
+                    req.ContentType = "application/json";
+                    using (var rs = req.GetRequestStream()) rs.Write(data, 0, data.Length);
+                }
                 using (var resp = (HttpWebResponse)req.GetResponse())
                 using (var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
                     return (Dictionary<string, object>)js.DeserializeObject(sr.ReadToEnd());
@@ -170,7 +197,8 @@ namespace GameNetKit
                 var r = e.Response as HttpWebResponse;
                 if (r == null) throw new SyncException("net", e.Message);
                 int code = (int)r.StatusCode;
-                throw new SyncException(code == 401 ? "code" : code == 403 ? "player" : "server", "HTTP " + code);
+                r.Close();   // an unclosed error response keeps one of the two connections to the host busy
+                throw new SyncException(code == 401 ? "code" : code == 403 ? "player" : code == 413 ? "toobig" : code == 429 ? "full" : "server", "HTTP " + code);
             }
         }
 
@@ -179,30 +207,52 @@ namespace GameNetKit
             var c = LoadSync();
             var me = ReadProfile();
             if (!c.Enabled || c.Server == "" || c.Code == "" || me == null) return;
-            // The player secret is derived from the group code and the player id, so it is always the same for this player in this
-            // group (a random one would be lost with the settings file and lock the player out of their own id).
+            string myId = Convert.ToString(me["id"]), myName = Convert.ToString(me["name"]);
+            // The player secret is random and private to this PC: nobody else in the group can post or delete as this player.
+            // Version 1.0.0 derived it from the group code, so its registration is upgraded once with the old value (Legacy).
+            if (c.Secret == "") c.Secret = RandomHex(32);
             using (var sha = SHA256.Create())
-                c.Secret = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(c.Code + "|" + Convert.ToString(me["id"]) + "|gamenetkit-player"))).Replace("-", "").ToLowerInvariant();
+                c.Legacy = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(c.Code + "|" + myId + "|gamenetkit-player"))).Replace("-", "").ToLowerInvariant();
             syncBusy = true;
             try
             {
-                string myId = Convert.ToString(me["id"]), myName = Convert.ToString(me["name"]);
                 try
                 {
                     Push(c, myId, myName);
                     Pull(c, myId);
-                    var st = Call(c, "GET", "/v1/status", null, null);
+                    var st = Call(c, "GET", "/v1/status", null);
                     syncPlayers = Convert.ToInt32(st["players"]);
                     syncError = "";
+                    syncDenied = 0;
                     syncLastOk = DateTime.Now;
                 }
-                catch (SyncException e) { syncError = e.Code; Program.Log("sync: " + e.Code + " " + e.Message); }
-                SaveSync(c);
+                catch (SyncException e)
+                {
+                    syncError = e.Code; Program.Log("sync: " + e.Code + " " + e.Message);
+                    if (e.Code == "player") { if (++syncDenied >= 3) RotateIdentity(c); } else syncDenied = 0;
+                }
+                MergeSync(c);
             }
             finally { syncBusy = false; }
         }
 
-        // my scans that the server has not seen yet, at most 40 per request
+        // The server knows this id with a secret this PC no longer has (the settings file was deleted but the profile was kept):
+        // continue as a new player. My scans stay in my History and are uploaded again under the new id.
+        void RotateIdentity(SyncCfg c)
+        {
+            try
+            {
+                var me = ReadProfile();
+                if (me == null) return;
+                File.WriteAllText(ProfilePath, js.Serialize(new Dictionary<string, object> { { "name", me["name"] }, { "id", NewId() } }), new UTF8Encoding(false));
+                c.Secret = RandomHex(32); c.Pushed = new HashSet<string>();
+                syncDenied = 0; syncError = "";
+                Program.Log("sync: player id was taken by an older registration; continuing with a new id");
+            }
+            catch (Exception e) { Program.Log("sync: could not change player id: " + e.Message); }
+        }
+
+        // my scans that the server has not seen yet, in requests of at most 40 scans / about 150 KB
         void Push(SyncCfg c, string myId, string myName)
         {
             if (!Directory.Exists(HistoryRoot)) return;
@@ -215,33 +265,74 @@ namespace GameNetKit
                     string key = Convert.ToString(run["game"]) + "|" + Convert.ToString(run["id"]);
                     if (!c.Pushed.Contains(key)) pending.Add(new KeyValuePair<string, Dictionary<string, object>>(key, run));
                 }
-            for (int i = 0; i < pending.Count; i += 40)
+            int i = 0;
+            while (i < pending.Count)
             {
-                var chunk = pending.Skip(i).Take(40).ToList();
-                var body = new Dictionary<string, object>
+                var chunk = new List<KeyValuePair<string, Dictionary<string, object>>>();
+                int size = 0;
+                while (i < pending.Count && chunk.Count < 40)
                 {
-                    { "player", new Dictionary<string, object> { { "id", myId }, { "name", myName } } },
-                    { "runs", chunk.Select(k => (object)new Dictionary<string, object>
-                        { { "id", k.Value["id"] }, { "game", k.Value["game"] }, { "time", k.Value.ContainsKey("time") ? k.Value["time"] : "" }, { "results", k.Value["results"] } }).ToList() }
-                };
-                Call(c, "POST", "/v1/runs", null, body);
-                foreach (var k in chunk) c.Pushed.Add(k.Key);
+                    int n = js.Serialize(pending[i].Value["results"]).Length + 200;
+                    if (chunk.Count > 0 && size + n > 150000) break;
+                    chunk.Add(pending[i]); size += n; i++;
+                }
+                PostChunk(c, myId, myName, chunk);
             }
         }
 
-        // everything newer than the cursor: friends' scans go to People\..., my own are restored if missing
+        void PostChunk(SyncCfg c, string myId, string myName, List<KeyValuePair<string, Dictionary<string, object>>> chunk)
+        {
+            var body = new Dictionary<string, object>
+            {
+                { "player", new Dictionary<string, object> { { "id", myId }, { "name", myName } } },
+                { "runs", chunk.Select(k => (object)new Dictionary<string, object>
+                    { { "id", k.Value["id"] }, { "game", k.Value["game"] }, { "time", k.Value.ContainsKey("time") ? k.Value["time"] : "" }, { "results", k.Value["results"] } }).ToList() }
+            };
+            try
+            {
+                var r = Call(c, "POST", "/v1/runs", body);
+                // runs the server refused are invalid for good (it checks them): they are marked as sent so they are not retried forever
+                foreach (var k in chunk) c.Pushed.Add(k.Key);
+                if (r.ContainsKey("rejected") && Convert.ToInt32(r["rejected"]) > 0) Program.Log("sync: server rejected " + r["rejected"] + " scan(s)");
+            }
+            catch (SyncException e)
+            {
+                if (e.Code != "toobig") throw;
+                if (chunk.Count > 1)
+                {
+                    int half = chunk.Count / 2;
+                    PostChunk(c, myId, myName, chunk.Take(half).ToList());
+                    PostChunk(c, myId, myName, chunk.Skip(half).ToList());
+                }
+                else { c.Pushed.Add(chunk[0].Key); Program.Log("sync: one scan is too big for the server and was skipped: " + chunk[0].Key); }
+            }
+        }
+
+        // everything newer than the cursor: friends' scans go to People\..., my own are restored if missing.
+        // A scan that could not be saved because of a disk problem stops the pull there (the cursor stays before it, so it is retried).
         void Pull(SyncCfg c, string myId)
         {
-            for (int guard = 0; guard < 50; guard++)
+            long cursor = c.Cursor;
+            try
             {
-                var r = Call(c, "GET", "/v1/runs?since=" + c.Cursor + "&limit=300", null, null);
-                foreach (object o in (object[])r["runs"])
+                for (int guard = 0; guard < 50; guard++)
                 {
-                    try { Accept(c, myId, (Dictionary<string, object>)o); } catch (Exception e) { Program.Log("sync: skipped a bad run: " + e.Message); }
+                    var r = Call(c, "GET", "/v1/runs?since=" + cursor + "&limit=300", null);
+                    bool stop = false;
+                    foreach (object o in (object[])r["runs"])
+                    {
+                        var run = o as Dictionary<string, object>;
+                        long seq = run != null && run.ContainsKey("seq") ? Convert.ToInt64(run["seq"]) : cursor;
+                        try { if (run != null) Accept(c, myId, run); }
+                        catch (IOException e) { Program.Log("sync: will retry a scan, disk problem: " + e.Message); stop = true; break; }
+                        catch (UnauthorizedAccessException e) { Program.Log("sync: will retry a scan, access problem: " + e.Message); stop = true; break; }
+                        catch (Exception e) { Program.Log("sync: skipped a bad run: " + e.Message); }
+                        if (seq > cursor) cursor = seq;
+                    }
+                    if (stop || !(r["more"] is bool) || !(bool)r["more"]) break;
                 }
-                c.Cursor = Convert.ToInt64(r["next"]);
-                if (!(r["more"] is bool) || !(bool)r["more"]) break;
             }
+            finally { c.Cursor = cursor; }
         }
 
         void Accept(SyncCfg c, string myId, Dictionary<string, object> run)
@@ -251,13 +342,22 @@ namespace GameNetKit
             string pname = CleanName(Convert.ToString(pl["name"]));
             string rid = Convert.ToString(run["id"]);
             string game = CleanName(Convert.ToString(run["game"]));
-            object[] results = (object[])run["results"];
-            if (!Regex.IsMatch(pid, "^[a-f0-9]{6,16}$") || pname == "" || !SafeId(rid) || game == "" || results.Length == 0 || results.Length > 40) return;
+            object[] raw = (object[])run["results"];
+            if (!Regex.IsMatch(pid, "^[a-f0-9]{6,16}$") || pname == "" || !SafeId(rid) || game == "" || raw.Length == 0 || raw.Length > 40) return;
 
-            var clean = new Dictionary<string, object>
+            // each server row must look like one (an address that parses, plain values); anything else drops the whole scan
+            var results = new List<object>();
+            foreach (object ro in raw)
             {
-                { "id", rid }, { "time", Convert.ToString(run["time"]).Length > 20 ? "" : Convert.ToString(run["time"]) }, { "game", game }, { "results", results }
-            };
+                var row = ro as Dictionary<string, object>;
+                IPAddress ip;
+                if (row == null || !row.ContainsKey("ip") || !IPAddress.TryParse(Convert.ToString(row["ip"]), out ip)) return;
+                results.Add(row);
+            }
+            if (js.Serialize(results).Length > 60000) return;
+
+            string time = Convert.ToString(run["time"]);
+            var clean = new Dictionary<string, object> { { "id", rid }, { "time", time.Length > 20 ? "" : time }, { "game", game }, { "results", results } };
             string gslug = Program.Slug(game);
             if (pid == myId)
             {
