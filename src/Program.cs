@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.5.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "0.5.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -340,7 +340,12 @@ namespace GameNetKit
             return new List<Dictionary<string, object>>
             {
                 new Dictionary<string, object> { { "name", "Rocket League" }, { "process", "RocketLeague.exe" }, { "enabled", true } },
-                new Dictionary<string, object> { { "name", "Overwatch 2" }, { "process", "Overwatch.exe" }, { "enabled", true } }
+                new Dictionary<string, object> { { "name", "Overwatch 2" }, { "process", "Overwatch.exe" }, { "enabled", true } },
+                // Call of Duty HQ games all run as cod.exe, so only the game you pick decides which history a scan goes to.
+                new Dictionary<string, object> { { "name", "Modern Warfare 3" }, { "process", "cod.exe" }, { "enabled", true } },
+                // Modern Warfare 4 is released on 2026-10-23; its exe name is a guess (same launcher family) until someone checks it.
+                new Dictionary<string, object> { { "name", "Modern Warfare 4" }, { "process", "cod.exe" }, { "enabled", true } },
+                new Dictionary<string, object> { { "name", "Fortnite" }, { "process", "FortniteClient-Win64-Shipping.exe" }, { "enabled", true } }
             };
         }
 
