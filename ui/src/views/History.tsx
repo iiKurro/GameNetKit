@@ -243,7 +243,7 @@ export function HistoryView({ t, games, counts, me, people, isBlocked, isRangeBl
                   <div className="grid grid-cols-[1fr_auto] items-center gap-3 p-4 sm:grid-cols-[150px_1fr_90px_110px_auto]">
                     <div className="min-w-0">
                       <div className="num text-sm font-medium">{r.time}</div>
-                      <div className="text-xs text-muted-foreground">{r.game}</div>
+                      <div className="text-xs text-muted-foreground">{r.game}{r.net?.isp ? <span className="hide-compact"> · {r.net.isp}</span> : null}</div>
                     </div>
                     <div className="col-span-2 min-w-0 sm:order-none sm:col-span-1">
                       {b ? (
