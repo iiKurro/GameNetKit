@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeft, Ban, CheckCircle2, Gamepad2, Lightbulb, LoaderCircle, Users } from "lucide-react";
+import { Ban, CheckCircle2, Gamepad2, Lightbulb, LoaderCircle, Users } from "lucide-react";
 import type { Key } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { Flag } from "@/lib/flags";
@@ -17,7 +17,6 @@ interface Props {
   insights: GameInsight[] | null;
   peopleCount: number;
   onBlock: (s: ServerResult, game: string, range: string) => Promise<void>;
-  onGoImport: () => void;
 }
 
 const where = (r: RangeInsight) =>
@@ -26,7 +25,7 @@ const where = (r: RangeInsight) =>
 const fill = (s: string, vars: Record<string, string | number>) => s.replace(/%(\w+)/g, (_, k) => String(vars[k] ?? ""));
 
 /** One or two block suggestions per game, built from everybody's scans, with the numbers that justify them. */
-export function InsightsView({ t, insights, peopleCount, onBlock, onGoImport }: Props) {
+export function InsightsView({ t, insights, peopleCount, onBlock }: Props) {
   const [busy, setBusy] = useState("");
 
   if (insights === null) {
@@ -47,12 +46,9 @@ export function InsightsView({ t, insights, peopleCount, onBlock, onGoImport }: 
       </div>
 
       {peopleCount === 0 && (
-        <div className="enter flex flex-wrap items-center justify-between gap-3 rounded-xl border border-info/30 bg-info/10 p-4">
-          <div className="flex min-w-0 items-start gap-3">
-            <Users className="mt-0.5 size-4 shrink-0 text-info" />
-            <p className="text-sm">{t("insightsNoPeople")}</p>
-          </div>
-          <Button variant="secondary" size="sm" onClick={onGoImport}><ArrowLeft className="rtl:rotate-180" /> {t("insightsGoImport")}</Button>
+        <div className="enter flex items-start gap-3 rounded-xl border border-info/30 bg-info/10 p-4">
+          <Users className="mt-0.5 size-4 shrink-0 text-info" />
+          <p className="text-sm">{t("insightsInvite")}</p>
         </div>
       )}
 
