@@ -84,7 +84,9 @@ export default function App() {
   const applyUpdate = async () => {
     setUpdPhase("updating");
     const r = await api.applyUpdate().catch(() => ({ ok: false }));
-    if (!r.ok) { setUpdPhase("idle"); setUpd((u) => (u ? { ...u, error: "x" } : u)); }
+    if (!r.ok) { setUpdPhase("idle"); setUpd((u) => (u ? { ...u, error: "x" } : u)); return; }
+    // the app restarts itself in a new window; close this old one
+    setTimeout(() => window.close(), 1500);
   };
 
   const fwMessage = (code?: string) => (code === "uac" ? t("errBlockUac") : t("errBlockFw"));
