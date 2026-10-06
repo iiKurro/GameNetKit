@@ -82,7 +82,7 @@ export function ResultCard({ s, t, first, delay = 0, blocked, game, onBlock, onU
       </ServerCardSpecs>
 
       {s.avg == null ? (
-        <p className="text-xs text-muted-foreground">{t("noReply")}</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">{t("noReplyHint")}</p>
       ) : (
         <div className="grid gap-3">
           <ServerCardMeter label={t("ping")} value={s.avg} display={`${s.avg} ms`} max={200} thresholds={[60, 100]} />
