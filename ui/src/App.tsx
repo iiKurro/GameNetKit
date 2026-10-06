@@ -125,6 +125,13 @@ export default function App() {
     const s = await api.syncConfig({ enabled }).catch(() => null);
     if (s) setSync(s);
   }, []);
+  const deleteMine = useCallback(async (): Promise<string> => {
+    const r = await api.syncDeleteMine().catch(() => null);
+    if (!r) return t("syncDelFail");
+    if (!r.ok) return r.error === "player" ? t("syncErrPlayer") : r.error === "code" ? t("syncErrCode") : r.error === "net" ? t("syncErrNet") : t("syncDelFail");
+    void refreshSync();
+    return "";
+  }, [t, refreshSync]);
   const historyCount = Object.values(counts).reduce((a, b) => a + b, 0);
 
   const isBlocked = useCallback((ip: string) => blocks.some((b) => covers(b.ip, ip)), [blocks]);
@@ -447,6 +454,7 @@ export default function App() {
                 sync={sync}
                 onSyncToggle={toggleSync}
                 onChangeCode={() => setDialog("code")}
+                onDeleteMine={deleteMine}
               />
             )}
           </div>
