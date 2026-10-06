@@ -1,4 +1,4 @@
-# Builds dist\GameNetKit.exe: web UI (vite) -> single html -> embedded in a C# exe compiled with the csc that ships with Windows.
+﻿# Builds dist\GameNetKit.exe: web UI (vite) -> single html -> embedded in a C# exe compiled with the csc that ships with Windows.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ui = Join-Path $root 'ui'
@@ -13,7 +13,7 @@ Pop-Location
 New-Item -ItemType Directory -Force $dist | Out-Null
 $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 & $csc /nologo /target:winexe /optimize+ /out:"$dist\GameNetKit.exe" `
-    /win32manifest:"$root\src\app.manifest" `
+    /win32manifest:"$root\src\app.manifest" /win32icon:"$root\src\app.ico" `
     /resource:"$ui\dist\index.html,ui.html" `
     /reference:System.Web.Extensions.dll /reference:System.Core.dll `
     "$root\src\Program.cs" "$root\src\UiHost.Extra.cs" "$root\src\Worker.cs" "$root\src\Analyzer.cs" "$root\src\Firewall.cs"
