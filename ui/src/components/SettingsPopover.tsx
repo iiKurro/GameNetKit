@@ -25,12 +25,13 @@ interface Props {
 export function SettingsPopover({ t, settings, busyKey, onChange, sync, onSyncToggle, onChangeCode }: Props) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const reduce = useReducedMotion();
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => { if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { setOpen(false); trigger.current?.focus(); } };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
     return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
@@ -44,7 +45,7 @@ export function SettingsPopover({ t, settings, busyKey, onChange, sync, onSyncTo
 
   return (
     <div ref={wrap} className="relative">
-      <Button variant="ghost" size="sm" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <Button ref={trigger} variant="ghost" size="sm" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <Settings2 /> {t("settingsTitle")}
       </Button>
       <AnimatePresence>
@@ -69,7 +70,9 @@ export function SettingsPopover({ t, settings, busyKey, onChange, sync, onSyncTo
                   <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("syncDesc")}</p>
                   <p className={cn("mt-2 text-xs", sync.error ? "text-warning" : "text-muted-foreground")}>
                     {!sync.hasCode ? t("syncNoCode")
+                      : !sync.enabled ? t("syncOff")
                       : sync.error === "code" ? t("syncErrCode")
+                      : sync.error === "full" ? t("syncErrFull")
                       : sync.error === "player" ? t("syncErrPlayer")
                       : sync.error === "net" ? t("syncErrNet")
                       : sync.error ? t("syncErrServer")
