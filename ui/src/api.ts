@@ -25,6 +25,8 @@ export interface ServerResult {
   ip: string;
   port: number;
   country: string;
+  /** ISO country code, when the lookup returned one (older saved scans only have the name) */
+  cc?: string;
   city: string;
   provider: string;
   host: string;
