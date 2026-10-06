@@ -33,13 +33,17 @@ interface Props {
   first?: boolean;
   delay?: number;
   blocked: boolean;
-  /** target = the IP, or a range like 34.165.0.0/16 */
-  onBlock: (target: string) => Promise<void>;
+  /** the game this scan belongs to; enables the "only while it runs" option */
+  game?: string;
+  /** target = the IP, or a range like 34.165.0.0/16; whilePlaying = switched on only while the game runs */
+  onBlock: (target: string, whilePlaying: boolean) => Promise<void>;
   onUnblock: () => Promise<void>;
 }
 
-export function ResultCard({ s, t, first, delay = 0, blocked, onBlock, onUnblock }: Props) {
+export function ResultCard({ s, t, first, delay = 0, blocked, game, onBlock, onUnblock }: Props) {
   const [confirm, setConfirm] = useState(false);
+  const [whilePlaying, setWhilePlaying] = useState(true);
+  const wp = !!game && whilePlaying;
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -97,12 +101,21 @@ export function ResultCard({ s, t, first, delay = 0, blocked, onBlock, onUnblock
           </Button>
         ) : confirm ? (
           <>
-            <Button variant="destructive" size="sm" disabled={busy} onClick={() => run(() => onBlock(rangeOf(s.ip)))}>
+            {game && (
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg bg-muted p-2.5 text-xs">
+                <input type="checkbox" className="mt-0.5 accent-[var(--color-primary)]" checked={whilePlaying} onChange={(e) => setWhilePlaying(e.target.checked)} />
+                <span>
+                  <span className="font-medium">{t("whilePlaying")} {game}</span>
+                  <span className="mt-0.5 block text-[11px] leading-relaxed text-muted-foreground">{t("whilePlayingHint")}</span>
+                </span>
+              </label>
+            )}
+            <Button variant="destructive" size="sm" disabled={busy} onClick={() => run(() => onBlock(rangeOf(s.ip), wp))}>
               {busy ? <LoaderCircle className="animate-spin" /> : <Ban />}
               {busy ? t("blocking") : <>{t("blockRange")} <span className="num">{rangeOf(s.ip)}</span></>}
             </Button>
             <p className="text-[11px] text-success">{t("blockRangeHint")}</p>
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => onBlock(s.ip))}>
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => onBlock(s.ip, wp))}>
               {t("blockOnlyIp")}
             </Button>
             <p className="text-[11px] leading-relaxed text-muted-foreground">{t("blockRangeNote")} {t("blockNote")}</p>
