@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.5.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "0.6.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -38,9 +38,10 @@ namespace GameNetKit
             var args = ParseArgs(argv);
             if (args.ContainsKey("fakeversion")) Version = args["fakeversion"];
             // demo runs live in their own folder so they can never touch real results, blocks or a running instance
-            if (args.ContainsKey("demo") && !args.ContainsKey("worker")) { DemoMode = true; DataDir = Path.Combine(DataDir, "demo-data"); }
+            if (args.ContainsKey("demo") && !args.ContainsKey("worker") && !args.ContainsKey("fw")) { DemoMode = true; DataDir = Path.Combine(DataDir, "demo-data"); }
             if (args.ContainsKey("worker")) return Worker.Run(args);
             if (args.ContainsKey("fw")) return Firewall.Run(args);
+            if (args.ContainsKey("guard")) return Guard.Run();
             if (args.ContainsKey("selftest")) return SelfTest();
             return new UiHost(args).Run();
         }
@@ -280,6 +281,9 @@ namespace GameNetKit
                     case "/api/heartbeat": seenBeat = true; lastBeat = DateTime.Now; result = Ok(); break;
                     case "/api/blocks": result = Blocks(); break;
                     case "/api/blocks/sync": result = SyncBlocks(); break;
+                    case "/api/guard": result = GuardState(); break;
+                    case "/api/guard/start": result = GuardStart(); break;
+                    case "/api/guard/stop": result = GuardStop(); break;
                     case "/api/unblockall": result = UnblockAll(); break;
                     case "/api/block": result = Block(ReadBody(ctx)); break;
                     case "/api/unblock": result = Unblock(ReadBody(ctx)); break;
@@ -327,26 +331,7 @@ namespace GameNetKit
         // ------------------------------------------------------------------ games / config
         List<Dictionary<string, object>> Games()
         {
-            string p = Path.Combine(Path.GetDirectoryName(exePath), "games.json");
-            try
-            {
-                if (File.Exists(p))
-                {
-                    var arr = (object[])js.DeserializeObject(File.ReadAllText(p));
-                    return arr.Select(o => (Dictionary<string, object>)o).ToList();
-                }
-            }
-            catch { }
-            return new List<Dictionary<string, object>>
-            {
-                new Dictionary<string, object> { { "name", "Rocket League" }, { "process", "RocketLeague.exe" }, { "enabled", true } },
-                new Dictionary<string, object> { { "name", "Overwatch 2" }, { "process", "Overwatch.exe" }, { "enabled", true } },
-                // Call of Duty HQ games all run as cod.exe, so only the game you pick decides which history a scan goes to.
-                new Dictionary<string, object> { { "name", "Modern Warfare 3" }, { "process", "cod.exe" }, { "enabled", true } },
-                // Modern Warfare 4 is released on 2026-10-23; its exe name is a guess (same launcher family) until someone checks it.
-                new Dictionary<string, object> { { "name", "Modern Warfare 4" }, { "process", "cod.exe" }, { "enabled", true } },
-                new Dictionary<string, object> { { "name", "Fortnite" }, { "process", "FortniteClient-Win64-Shipping.exe" }, { "enabled", true } }
-            };
+            return GameList.Load(Path.GetDirectoryName(exePath), js);
         }
 
         int Cfg(string key, int def)
@@ -490,6 +475,8 @@ namespace GameNetKit
         {
             if (!hasUpdate || string.IsNullOrEmpty(assetUrl) || !assetUrl.StartsWith("https://github.com/" + Program.Repo + "/"))
                 return new Dictionary<string, object> { { "ok", false }, { "error", "no update" } };
+            StopGuard();
+            if (GuardRunning()) return new Dictionary<string, object> { { "ok", false }, { "error", "guard running" } };
             string tmp = exePath + ".new";
             try
             {
