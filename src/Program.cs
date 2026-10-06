@@ -17,12 +17,19 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "0.4.2";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "0.4.3";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GameNetKit");
         public static bool DemoMode;
+
+        // folder-safe name of a game: "Rocket League" -> "RocketLeague"
+        public static string Slug(string game)
+        {
+            string s = System.Text.RegularExpressions.Regex.Replace(game ?? "", "[^A-Za-z0-9]", "");
+            return s == "" ? "Other" : s;
+        }
 
         [STAThread]
         public static int Main(string[] argv)
@@ -265,16 +272,19 @@ namespace GameNetKit
                     case "/api/begin": File.WriteAllText(Path.Combine(Program.DataDir, "go.flag"), "1"); result = Ok(); break;
                     case "/api/cancel": File.WriteAllText(Path.Combine(Program.DataDir, "cancel.flag"), "1"); result = Ok(); break;
                     case "/api/reset": try { File.Delete(statePath); } catch { } ClearFlags(); result = Ok(); break;
-                    case "/api/openfolder": OpenFolder(); result = Ok(); break;
+                    case "/api/openfolder": OpenFolder(ReadBody(ctx)); result = Ok(); break;
                     case "/api/heartbeat": seenBeat = true; lastBeat = DateTime.Now; result = Ok(); break;
                     case "/api/blocks": result = Blocks(); break;
+                    case "/api/blocks/sync": result = SyncBlocks(); break;
+                    case "/api/unblockall": result = UnblockAll(); break;
                     case "/api/block": result = Block(ReadBody(ctx)); break;
                     case "/api/unblock": result = Unblock(ReadBody(ctx)); break;
-                    case "/api/history": result = HistoryList(); break;
+                    case "/api/history": result = HistoryList(ReadBody(ctx)); break;
+                    case "/api/history/counts": result = HistoryCounts(); break;
                     case "/api/history/get": result = HistoryGet(ReadBody(ctx)); break;
                     case "/api/history/delete": result = HistoryDelete(ReadBody(ctx)); break;
-                    case "/api/history/clear": result = HistoryClear(); break;
-                    case "/api/history/export": result = HistoryExport(); break;
+                    case "/api/history/clear": result = HistoryClear(ReadBody(ctx)); break;
+                    case "/api/history/export": result = HistoryExport(ReadBody(ctx)); break;
                     case "/api/update/check": result = CheckUpdate(); break;
                     case "/api/update/apply": result = ApplyUpdate(); break;
                     default: Send(ctx, 404, "text/plain", "not found"); return;
@@ -426,13 +436,6 @@ namespace GameNetKit
                 }
             });
             return Ok();
-        }
-
-        void OpenFolder()
-        {
-            string dir = ResultsDir;
-            Directory.CreateDirectory(dir);
-            Process.Start("explorer.exe", "\"" + dir + "\"");
         }
 
         // ------------------------------------------------------------------ updates (GitHub releases)
