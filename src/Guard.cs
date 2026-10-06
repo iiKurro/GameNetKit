@@ -33,7 +33,9 @@ namespace GameNetKit
                 Game("Modern Warfare 3", "cod.exe"),
                 // Modern Warfare 4 is released on 2026-10-23; its exe name is a guess (same launcher family) until someone checks it.
                 Game("Modern Warfare 4", "cod.exe"),
-                Game("Fortnite", "FortniteClient-Win64-Shipping.exe")
+                Game("Fortnite", "FortniteClient-Win64-Shipping.exe"),
+                // Task Manager shows PioneerGame.exe for ARC Raiders (the -Win64-Shipping name is covered too, in case a build uses it)
+                Game("ARC Raiders", "PioneerGame.exe|PioneerGame-Win64-Shipping.exe")
             };
         }
 
@@ -100,7 +102,7 @@ namespace GameNetKit
             {
                 { "pid", Process.GetCurrentProcess().Id },
                 { "time", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) },
-                { "running", running }, { "applied", applied }, { "error", error }
+                { "running", running }, { "applied", applied }, { "error", error }, { "version", Program.Version }
             };
             string tmp = StatePath + ".tmp";
             try { File.WriteAllText(tmp, Js.Serialize(st), new UTF8Encoding(false)); File.Copy(tmp, StatePath, true); } catch { }
