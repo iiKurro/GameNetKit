@@ -114,7 +114,7 @@ namespace GameNetKit
             if (whilePlaying)
             {
                 // the block only lives while that game runs: the guard (one admin prompt, then silent) switches it on and off
-                if (!GuardRunning()) { string why = StartGuard(); if (why != "") return Fail(why); }
+                if (!GuardRunning()) { string why = StartGuard(true); if (why != "") return Fail(why); }
                 var gl = LoadBlocks().Where(b => (string)b["ip"] != ip).ToList();
                 gl.Add(new Dictionary<string, object>
                 {
@@ -187,6 +187,7 @@ namespace GameNetKit
                 st["games"] = g["running"];
                 st["applied"] = g["applied"];
                 st["error"] = g.ContainsKey("error") ? g["error"] : "";
+                st["version"] = g.ContainsKey("version") ? g["version"] : "";
             }
             catch { }
             return st;
@@ -195,19 +196,31 @@ namespace GameNetKit
         bool GuardRunning() { return (bool)((Dictionary<string, object>)GuardState())["running"]; }
 
         // starts the guard (UAC prompt, no waiting for it to end). "" = running, otherwise an error code.
-        string StartGuard()
+        // remember = the user asked for it, so it is also started automatically the next time the app opens.
+        // With the "start with Windows" task installed the guard starts silently; otherwise Windows shows its admin prompt.
+        string StartGuard(bool remember)
         {
-            try
+            try { File.Delete(Guard.StopPath); } catch { }
+            bool started = false;
+            if (!Demo && TaskInstalled() && GuardInstall.RunTask())
             {
-                try { File.Delete(Guard.StopPath); } catch { }
-                var psi = new ProcessStartInfo(exePath, "--guard 1" + (Demo ? " --demo 1" : "")) { UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden };
-                if (!Demo) psi.Verb = "runas";
-                Process.Start(psi);
+                for (int i = 0; i < 40 && !started; i++) { if (GuardRunning()) started = true; else Thread.Sleep(250); }
             }
-            catch (Win32Exception) { return "uac"; }
-            catch { return "guard"; }
-            for (int i = 0; i < 40; i++) { if (GuardRunning()) return ""; Thread.Sleep(250); }
-            return "guard";
+            if (!started)
+            {
+                try
+                {
+                    var psi = new ProcessStartInfo(exePath, "--guard 1" + (Demo ? " --demo 1" : "")) { UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden };
+                    if (!Demo) psi.Verb = "runas";
+                    Process.Start(psi);
+                }
+                catch (Win32Exception) { return "uac"; }
+                catch { return "guard"; }
+                for (int i = 0; i < 40 && !started; i++) { if (GuardRunning()) started = true; else Thread.Sleep(250); }
+            }
+            if (!started) return "guard";
+            if (remember) Remember("guardAuto", true);
+            return "";
         }
 
         void StopGuard()
@@ -219,12 +232,18 @@ namespace GameNetKit
 
         object GuardStart()
         {
-            if (GuardRunning()) return Ok();
-            string why = StartGuard();
+            if (GuardRunning()) { Remember("guardAuto", true); return Ok(); }
+            string why = StartGuard(true);
             return why == "" ? Ok() : Fail(why);
         }
 
-        object GuardStop() { StopGuard(); return Ok(); }
+        // stopping it by hand also means "do not start it by itself next time"
+        object GuardStop()
+        {
+            StopGuard();
+            Remember("guardAuto", false);
+            return Ok();
+        }
 
         // One admin prompt removes every rule this app ever created.
         object UnblockAll()
