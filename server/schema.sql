@@ -1,4 +1,4 @@
-﻿-- GameNetKit group server schema (Cloudflare D1)
+-- GameNetKit group server schema (Cloudflare D1)
 CREATE TABLE IF NOT EXISTS players (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS runs (
   run_id     TEXT NOT NULL,
   time       TEXT NOT NULL,
   results    TEXT NOT NULL,                        -- JSON array of the servers of that scan
+  net        TEXT,                                 -- JSON { isp, country } of the player's connection when the scan was made
   created_at INTEGER NOT NULL,
   UNIQUE (player_id, game, run_id)
 );
