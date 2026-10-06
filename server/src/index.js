@@ -9,7 +9,8 @@
 //   GET    /v1/runs?since=N     scans with seq > N (oldest first, at most 300), { runs, next, more }
 //   POST   /v1/runs             { player: { id, name }, runs: [ ... ] }  headers: x-player-secret
 //   GET    /v1/admin/players    (header x-admin) every player with scan counts per game
-//   POST   /v1/admin/delete     (header x-admin) { player, game? } removes scans (and the player when no game is given)
+//   GET    /v1/admin/runs?player=ID   (header x-admin) the scans of one player, newest first
+//   POST   /v1/admin/delete     (header x-admin) { player, game?, run? } removes one scan, one game's scans, or everything (and the player)
 // Every call except "/" needs the header  x-group: <group code>.
 
 const MAX_BODY = 256 * 1024;      // bytes of JSON per upload
@@ -54,6 +55,9 @@ async function sameSecret(a, b) {
 }
 
 // control characters, bidi overrides / zero-width marks and markup characters are dropped from every text field
+// "Salem", "salem " and "SALEM" are the same account name
+const nameKey = (name) => String(name).trim().toLowerCase().replace(/\s+/g, " ");
+
 const str = (v, max) => (typeof v === "string" ? v.replace(/[\p{Cc}\p{Cf}<>&]/gu, "").slice(0, max) : "");
 const int = (v, lo, hi) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : 0);
 const numOrNull = (v, hi) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Math.min(hi, Math.max(0, Number(v))));
@@ -139,12 +143,17 @@ async function route(request, env) {
     if (!row) {
       const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM players").first();
       if (n.n >= MAX_PLAYERS) return json({ error: "group is full" }, 429);
-      await env.DB.prepare("INSERT INTO players (id, name, secret_hash, created_at) VALUES (?, ?, ?, ?)").bind(id, name, hash, Date.now()).run();
+      // one account per name (the name is part of the login), and a name is never changed afterwards
+      const key = nameKey(name);
+      const taken = await env.DB.prepare("SELECT id FROM players WHERE name_key = ?").bind(key).first();
+      if (taken) return json({ error: "name taken" }, 409);
+      await env.DB.prepare("INSERT INTO players (id, name, name_key, secret_hash, created_at) VALUES (?, ?, ?, ?, ?)").bind(id, name, key, hash, Date.now()).run();
     } else if (row.secret_hash !== hash) {
+      // players of 1.0.0 proved themselves with a secret derived from the group code: they may swap it once for a new one
       if (upgrade.length >= 16 && upgrade.length <= 128 && row.secret_hash === (await sha256(upgrade))) {
-        await env.DB.prepare("UPDATE players SET secret_hash = ?, name = ? WHERE id = ?").bind(hash, name, id).run();
+        await env.DB.prepare("UPDATE players SET secret_hash = ? WHERE id = ?").bind(hash, id).run();
       } else return json({ error: "player belongs to someone else" }, 403);
-    } else if (row.name !== name) await env.DB.prepare("UPDATE players SET name = ? WHERE id = ?").bind(name, id).run();
+    }
 
     const have = await env.DB.prepare("SELECT COUNT(*) AS n FROM runs WHERE player_id = ?").bind(id).first();
     if (have.n >= MAX_RUNS_PER_PLAYER) return json({ error: "too many scans" }, 429);
@@ -159,20 +168,88 @@ async function route(request, env) {
     return json({ ok: true, accepted: clean.length, rejected: body.runs.length - clean.length });
   }
 
+  // ---- accounts: the name plus the player's password (turned into a secret by the app) is the login.
+  // POST /v1/login    body { name }, header x-player-secret  ->  { exists:false } | { exists:true, id }  (403 wrong password, 429 too many tries)
+  // POST /v1/password headers x-player (id), x-player-secret (current), x-new-secret  ->  sets the new secret (404 unknown id, 403 wrong)
+  if (url.pathname === "/v1/login" && request.method === "POST") {
+    let body;
+    try { body = JSON.parse(await request.text()); } catch { return json({ error: "bad json" }, 400); }
+    const name = str(body?.name, 24).trim();
+    const secret = request.headers.get("x-player-secret") || "";
+    if (!name || secret.length < 16 || secret.length > 128) return json({ error: "bad login" }, 400);
+    const key = nameKey(name);
+    const now = Date.now();
+    const f = await env.DB.prepare("SELECT n, t FROM fails WHERE k = ?").bind(key).first();
+    if (f && f.n >= 8 && now - f.t < 10 * 60 * 1000) return json({ error: "too many tries" }, 429);
+    const row = await env.DB.prepare("SELECT id, secret_hash FROM players WHERE name_key = ?").bind(key).first();
+    if (!row) return json({ ok: true, exists: false });
+    const hash = await sha256(secret);
+    if (row.secret_hash === "") {
+      // the admin reset this account: the next person to log in with the name chooses the password
+      await env.DB.prepare("UPDATE players SET secret_hash = ? WHERE id = ?").bind(hash, row.id).run();
+      return json({ ok: true, exists: true, id: row.id, claimed: true });
+    }
+    if (row.secret_hash !== hash) {
+      const keep = f && now - f.t < 10 * 60 * 1000 ? f.n + 1 : 1;
+      await env.DB.prepare("INSERT INTO fails (k, n, t) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET n = excluded.n, t = excluded.t").bind(key, keep, now).run();
+      return json({ error: "wrong password" }, 403);
+    }
+    await env.DB.prepare("DELETE FROM fails WHERE k = ?").bind(key).run();
+    return json({ ok: true, exists: true, id: row.id });
+  }
+
+  if (url.pathname === "/v1/password" && request.method === "POST") {
+    const id = request.headers.get("x-player") || "";
+    const secret = request.headers.get("x-player-secret") || "";
+    const next = request.headers.get("x-new-secret") || "";
+    if (!PLAYER_RX.test(id) || next.length < 16 || next.length > 128) return json({ error: "bad request" }, 400);
+    const row = await env.DB.prepare("SELECT secret_hash FROM players WHERE id = ?").bind(id).first();
+    if (!row) return json({ error: "unknown player" }, 404);
+    const upgrade = request.headers.get("x-player-upgrade") || "";
+    const proven = row.secret_hash === (await sha256(secret)) || (upgrade.length >= 16 && row.secret_hash === (await sha256(upgrade)));
+    if (!proven) return json({ error: "wrong secret" }, 403);
+    await env.DB.prepare("UPDATE players SET secret_hash = ? WHERE id = ?").bind(await sha256(next), id).run();
+    return json({ ok: true });
+  }
+
   // ---- group admin (the person who owns the ADMIN_CODE secret): see every player and remove scans. Nobody else can delete anything.
   if (url.pathname.startsWith("/v1/admin/")) {
     const adminCode = request.headers.get("x-admin") || "";
     if (!env.ADMIN_CODE || !adminCode || !(await sameSecret(adminCode, String(env.ADMIN_CODE).trim()))) return json({ error: "not admin" }, 403);
 
     if (url.pathname === "/v1/admin/players" && request.method === "GET") {
-      const players = (await env.DB.prepare("SELECT id, name, created_at FROM players ORDER BY created_at").all()).results;
+      const players = (await env.DB.prepare("SELECT id, name, created_at, secret_hash FROM players ORDER BY created_at").all()).results;
       const perGame = (await env.DB.prepare("SELECT player_id, game, COUNT(*) AS n, MAX(time) AS last FROM runs GROUP BY player_id, game").all()).results;
       return json({
         players: players.map((p) => {
           const games = perGame.filter((g) => g.player_id === p.id).map((g) => ({ game: g.game, count: g.n, last: g.last }));
-          return { id: p.id, name: p.name, created: p.created_at, total: games.reduce((a, g) => a + g.count, 0), games };
+          return { id: p.id, name: p.name, created: p.created_at, reset: p.secret_hash === "", total: games.reduce((a, g) => a + g.count, 0), games };
         }),
       });
+    }
+
+    if (url.pathname === "/v1/admin/runs" && request.method === "GET") {
+      const id = url.searchParams.get("player") || "";
+      if (!PLAYER_RX.test(id)) return json({ error: "bad player" }, 400);
+      const rows = (await env.DB.prepare("SELECT run_id, game, time, results FROM runs WHERE player_id = ? ORDER BY seq DESC LIMIT 500").bind(id).all()).results;
+      return json({
+        runs: rows.map((r) => {
+          let best = null;
+          try { const b = JSON.parse(r.results)[0]; best = b && { ip: b.ip, country: b.country, city: b.city, avg: b.avg, verdict: b.verdict }; } catch { /* unreadable row: listed without details */ }
+          return { id: r.run_id, game: r.game, time: r.time, best };
+        }),
+      });
+    }
+
+    if (url.pathname === "/v1/admin/reset" && request.method === "POST") {
+      let body;
+      try { body = JSON.parse(await request.text()); } catch { return json({ error: "bad json" }, 400); }
+      const id = String(body?.player || "");
+      if (!PLAYER_RX.test(id)) return json({ error: "bad player" }, 400);
+      await env.DB.prepare("UPDATE players SET secret_hash = '' WHERE id = ?").bind(id).run();
+      // also forget earlier wrong tries, so the owner is not locked out of choosing the new password
+      await env.DB.prepare("DELETE FROM fails WHERE k = (SELECT name_key FROM players WHERE id = ?)").bind(id).run();
+      return json({ ok: true });
     }
 
     if (url.pathname === "/v1/admin/delete" && request.method === "POST") {
@@ -181,6 +258,13 @@ async function route(request, env) {
       const id = String(body?.player || "");
       if (!PLAYER_RX.test(id)) return json({ error: "bad player" }, 400);
       const game = typeof body?.game === "string" ? body.game : "";
+      const run = typeof body?.run === "string" ? body.run : "";
+      if (run) {
+        // one scan
+        if (!ID_RX.test(run)) return json({ error: "bad run" }, 400);
+        const one = await env.DB.prepare("DELETE FROM runs WHERE player_id = ? AND run_id = ?" + (game ? " AND game = ?" : "")).bind(...(game ? [id, run, game] : [id, run])).run();
+        return json({ ok: true, removed: one.meta?.changes ?? 0 });
+      }
       const before = await env.DB.prepare("SELECT COUNT(*) AS n FROM runs WHERE player_id = ?" + (game ? " AND game = ?" : "")).bind(...(game ? [id, game] : [id])).first();
       // one game: only its scans go; everything: the scans and the player record (a returning player registers again by uploading)
       const stmts = game
