@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Download, Gamepad2, History as HistoryIcon, Trash2 } from "lucide-react";
 import { api, type Run, type RunSummary, type ServerResult } from "@/api";
 import type { Key } from "@/i18n";
@@ -28,7 +28,7 @@ interface Props {
   games: string[];
   counts: Record<string, number>;
   isBlocked: (ip: string) => boolean;
-  onBlock: (s: ServerResult, game: string, target: string) => Promise<void>;
+  onBlock: (s: ServerResult, game: string, target: string, whilePlaying: boolean) => Promise<void>;
   onUnblock: (ip: string) => Promise<void>;
   onChanged: () => void;
 }
@@ -142,7 +142,7 @@ export function HistoryView({ t, games, counts, isBlocked, onBlock, onUnblock, o
         </div>
       ) : (
         <>
-          <Suggestions t={t} items={tips} onBlock={(s, target) => onBlock(s, sel, target)} />
+          <Suggestions t={t} items={tips} onBlock={(s, target) => onBlock(s, sel, target, true)} />
           <StatsCard rows={rows} t={t} />
 
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -220,7 +220,8 @@ export function HistoryView({ t, games, counts, isBlocked, onBlock, onUnblock, o
                             t={t}
                             first={k === 0}
                             blocked={isBlocked(s.ip)}
-                            onBlock={(target) => onBlock(s, run.game, target)}
+                            game={run.game}
+                            onBlock={(target, wp) => onBlock(s, run.game, target, wp)}
                             onUnblock={() => onUnblock(s.ip)}
                           />
                         ))
