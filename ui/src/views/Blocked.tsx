@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Ban, LoaderCircle, Plus, RefreshCw, ShieldOff } from "lucide-react";
 import type { BlockEntry } from "@/api";
 import type { Key } from "@/i18n";
 import { Button } from "@/components/ui/button";
+import { Status } from "@/components/ui/status";
 
 type T = (k: Key) => string;
 
@@ -96,7 +97,10 @@ export function BlockedView({ t, blocks, onUnblock, onUnblockAll, onAdd, onSync 
               {list.map((b, i) => (
                 <div key={b.ip} className={`flex flex-wrap items-center justify-between gap-3 p-4 ${i > 0 ? "border-t border-border" : ""}`}>
                   <div className="min-w-0">
-                    <div className="num text-sm font-medium">{b.ip}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="num text-sm font-medium">{b.ip}</span>
+                      {b.method === "route" && <Status variant="info" title={t("viaRouteHint")}>{t("viaRoute")}</Status>}
+                    </div>
                     <div className="text-xs break-words text-muted-foreground">
                       {b.label}{b.label && b.time ? " · " : ""}{b.time && <>{t("since")} <span className="num">{b.time}</span></>}
                     </div>
