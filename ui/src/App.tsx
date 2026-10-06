@@ -1,6 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, Ban, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Play, Radar, RefreshCw, ShieldCheck, Square, Wifi, X } from "lucide-react";
-import { api, type BlockEntry, type Info, type RunSummary, type ServerResult, type State, type UpdateInfo } from "@/api";
+import { api, type BlockEntry, type GuardState, type Info, type RunSummary, type ServerResult, type State, type UpdateInfo } from "@/api";
 import { makeT, type Lang, type Key } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { covers } from "@/lib/cidr";
@@ -43,6 +43,7 @@ export default function App() {
   const [fwError, setFwError] = useState("");
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [scanRows, setScanRows] = useState<RunSummary[]>([]);
+  const [guard, setGuard] = useState<GuardState>({ running: false, games: [], applied: [] });
   const historyCount = Object.values(counts).reduce((a, b) => a + b, 0);
 
   const isBlocked = useCallback((ip: string) => blocks.some((b) => covers(b.ip, ip)), [blocks]);
@@ -69,9 +70,11 @@ export default function App() {
     void refreshBlocks();
     void refreshHistoryCount();
     const poll = setInterval(() => api.state().then(setState).catch(() => {}), 1000);
+    const guardPoll = setInterval(() => api.guard().then(setGuard).catch(() => {}), 3000);
+    api.guard().then(setGuard).catch(() => {});
     const beat = setInterval(() => api.heartbeat().catch(() => {}), 3000);
     api.heartbeat().catch(() => {});
-    return () => { clearInterval(poll); clearInterval(beat); };
+    return () => { clearInterval(poll); clearInterval(guardPoll); clearInterval(beat); };
   }, [refreshBlocks, refreshHistoryCount]);
 
   // a finished scan adds a history entry
@@ -103,11 +106,12 @@ export default function App() {
     (code === "uac" ? t("errBlockUac") : t("errBlockFw")) + (detail ? "\n" + detail : "");
 
   // target = a single IP or a range such as 34.165.0.0/16
-  const block = useCallback(async (s: ServerResult, gameName: string, target: string) => {
+  const block = useCallback(async (s: ServerResult, gameName: string, target: string, whilePlaying: boolean) => {
     setFwError("");
-    const r = await api.block(target, locationOf(s), gameName).catch(() => ({ ok: false, error: "x" }));
+    const r = await api.block(target, locationOf(s), gameName, whilePlaying && gameName ? "game" : "always").catch(() => ({ ok: false, error: "x" }));
     if (!r.ok) setFwError(fwMessage(r.error, (r as { detail?: string }).detail));
     await refreshBlocks();
+    api.guard().then(setGuard).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshBlocks, lang]);
 
@@ -134,13 +138,28 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshBlocks, lang]);
 
-  const addManual = useCallback(async (target: string) => {
+  const addManual = useCallback(async (target: string, gameName: string) => {
     setFwError("");
-    const r = await api.block(target, "", "").catch(() => ({ ok: false, error: "x" } as { ok: boolean; error?: string; detail?: string }));
+    const r = await api.block(target, "", gameName, gameName ? "game" : "always").catch(() => ({ ok: false, error: "x" } as { ok: boolean; error?: string; detail?: string }));
     if (!r.ok) setFwError(fwMessage(r.error, r.detail));
     await refreshBlocks();
+    api.guard().then(setGuard).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshBlocks, lang]);
+
+  const guardStart = useCallback(async () => {
+    setFwError("");
+    const r = await api.guardStart().catch(() => ({ ok: false, error: "x" } as { ok: boolean; error?: string }));
+    if (!r.ok) setFwError(r.error === "uac" ? t("errBlockUac") : t("errGuard"));
+    setGuard(await api.guard().catch(() => guard));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang, guard]);
+
+  const guardStop = useCallback(async () => {
+    await api.guardStop().catch(() => {});
+    setGuard(await api.guard().catch(() => guard));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guard]);
 
   const syncBlocks = useCallback(async () => {
     setBlocks(await api.blocksSync().catch(() => [] as BlockEntry[]));
@@ -203,6 +222,7 @@ export default function App() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {guard.running && <Status variant="success" pulse title={t("guardText")}>{t("guardTitle")}</Status>}
           {updPhase === "checking" && <Status variant="info" pulse>{t("checking")}</Status>}
           {updPhase === "idle" && upd && !upd.error && !upd.hasUpdate && <Status variant="success">{t("upToDate")}</Status>}
           {updPhase === "idle" && upd?.hasUpdate && <Status variant="warning" pulse>{t("updateAvail")} <span className="num">{upd.latest}</span></Status>}
@@ -278,7 +298,18 @@ export default function App() {
         />
       )}
 
-      {tab === "blocked" && <BlockedView t={t} blocks={blocks} onUnblock={unblockTarget} onUnblockAll={unblockAll} onAdd={addManual} onSync={syncBlocks} />}
+      {tab === "blocked" && <BlockedView
+          t={t}
+          blocks={blocks}
+          guard={guard}
+          games={info?.games.map((g) => g.name) ?? []}
+          onUnblock={unblockTarget}
+          onUnblockAll={unblockAll}
+          onAdd={addManual}
+          onSync={syncBlocks}
+          onGuardStart={guardStart}
+          onGuardStop={guardStop}
+        />}
 
       {tab === "scan" && (
         <main className="grid flex-1 gap-5 lg:grid-cols-[330px_1fr]">
@@ -362,7 +393,7 @@ export default function App() {
                 <Suggestions
                   t={t}
                   items={suggestions(rangeStats(scanRows), isBlocked)}
-                  onBlock={(s, target) => block(s, state.game, target)}
+                  onBlock={(s, target) => block(s, state.game, target, true)}
                 />
                 <VerdictBanner best={best} t={t} />
                 <div className="grid gap-4 md:grid-cols-2">
@@ -374,7 +405,8 @@ export default function App() {
                       first={i === 0}
                       delay={i * 60}
                       blocked={isBlocked(s.ip)}
-                      onBlock={(target) => block(s, state.game, target)}
+                      game={state.game}
+                      onBlock={(target, wp) => block(s, state.game, target, wp)}
                       onUnblock={() => unblockFor(s.ip)}
                     />
                   ))}
