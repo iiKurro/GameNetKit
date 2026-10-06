@@ -52,7 +52,8 @@ namespace GameNetKit
             public string Code = "";
             public string Secret = "";
             public string Legacy = "";   // the secret version 1.0.0 derived from the code; sent only to upgrade an older registration
-            public string PlayerId = "";   // sent as x-player (needed by the delete call)
+            public string PlayerId = "";   // sent as x-player when set
+            public string Admin = "";      // the group admin code (only on the admin's PC)
             public long Cursor;
             public HashSet<string> Pushed = new HashSet<string>();
         }
@@ -70,6 +71,7 @@ namespace GameNetKit
                         if (d.ContainsKey("enabled") && d["enabled"] is bool) c.Enabled = (bool)d["enabled"];
                         if (d.ContainsKey("code")) c.Code = Unprotect(Convert.ToString(d["code"]));
                         if (d.ContainsKey("secret")) c.Secret = Unprotect(Convert.ToString(d["secret"]));
+                        if (d.ContainsKey("admin")) c.Admin = Unprotect(Convert.ToString(d["admin"]));
                         if (d.ContainsKey("cursor")) c.Cursor = Convert.ToInt64(d["cursor"]);
                         if (d.ContainsKey("pushed") && d["pushed"] is object[])
                             foreach (object o in (object[])d["pushed"]) c.Pushed.Add(Convert.ToString(o));
@@ -88,6 +90,7 @@ namespace GameNetKit
                 var d = new Dictionary<string, object>
                 {
                     { "enabled", c.Enabled }, { "code", c.Code == "" ? "" : Protect(c.Code) }, { "secret", c.Secret == "" ? "" : Protect(c.Secret) },
+                    { "admin", c.Admin == "" ? "" : Protect(c.Admin) },
                     { "cursor", c.Cursor }, { "pushed", c.Pushed.ToList() }
                 };
                 string tmp = SyncPath + ".tmp";
@@ -122,6 +125,7 @@ namespace GameNetKit
                 { "lastOkSecondsAgo", syncLastOk == DateTime.MinValue ? -1 : (int)(DateTime.Now - syncLastOk).TotalSeconds },
                 { "players", syncPlayers },
                 { "uploaded", c.Pushed.Count },
+                { "admin", c.Admin != "" },
                 { "busy", syncBusy }
             };
         }
@@ -184,6 +188,7 @@ namespace GameNetKit
                 req.Headers["x-player-secret"] = c.Secret;
                 if (c.Legacy != "" && method != "GET") req.Headers["x-player-upgrade"] = c.Legacy;
                 if (c.PlayerId != "") req.Headers["x-player"] = c.PlayerId;
+                if (c.Admin != "" && path.StartsWith("/v1/admin/")) req.Headers["x-admin"] = c.Admin;
                 if (body != null)
                 {
                     byte[] data = Encoding.UTF8.GetBytes(js.Serialize(body));
@@ -212,49 +217,49 @@ namespace GameNetKit
             lock (syncRun) SyncCycle();
         }
 
-        // Removes everything this player uploaded from the server. It does not touch my own history on this PC, and every scan that
-        // exists now is marked as "already sent", so it is not uploaded again; scans made from now on are shared as usual.
-        object SyncDeleteMine()
+        // ------------------------------------------------------------------ group admin
+        // Only the person who owns the server's ADMIN_CODE can look at all players and remove scans. The code is typed into a hidden
+        // dialog (Ctrl+Shift+A) and kept encrypted next to the group code; nobody else sees any admin control, and the server
+        // refuses every admin call without the code anyway.
+        object AdminUnlock(Dictionary<string, object> body)
         {
-            if (!Monitor.TryEnter(syncRun, 30000)) return Fail("busy");
-            try
-            {
-                var c = LoadSync();
-                var me = ReadProfile();
-                if (c.Server == "" || c.Code == "" || me == null) return Fail("nocode");
-                string myId = Convert.ToString(me["id"]);
-                if (c.Secret == "") c.Secret = RandomHex(32);
-                c.PlayerId = myId;
-                using (var sha = SHA256.Create())
-                    c.Legacy = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(c.Code + "|" + myId + "|gamenetkit-player"))).Replace("-", "").ToLowerInvariant();
-                int removed = 0;
-                try
-                {
-                    var r = Call(c, "DELETE", "/v1/me", null);
-                    if (r.ContainsKey("removed")) removed = Convert.ToInt32(r["removed"]);
-                }
-                catch (SyncException e) { return Fail(e.Code); }
-                foreach (string key in LocalRunKeys()) c.Pushed.Add(key);
-                MergeSync(c);
-                syncWake.Set();
-                return new Dictionary<string, object> { { "ok", true }, { "removed", removed } };
-            }
-            finally { Monitor.Exit(syncRun); }
+            var c = LoadSync();
+            string code = body.ContainsKey("code") ? Convert.ToString(body["code"]).Trim() : "";
+            if (c.Server == "" || c.Code == "") return Fail("nocode");
+            if (code == "" || code.Length > 120) return Fail("admin");
+            c.Admin = code;
+            try { Call(c, "GET", "/v1/admin/players", null); }
+            catch (SyncException e) { return Fail(e.Code == "player" ? "admin" : e.Code); }
+            lock (syncLock) { var cur = LoadSync(); cur.Admin = code; SaveSync(cur); }
+            return Ok();
         }
 
-        List<string> LocalRunKeys()
+        object AdminLock()
         {
-            var keys = new List<string>();
-            if (!Directory.Exists(HistoryRoot)) return keys;
-            foreach (string gdir in Directory.GetDirectories(HistoryRoot))
-                foreach (string f in Directory.GetFiles(gdir, "*.json"))
-                {
-                    var run = LoadRun(f);
-                    if (run != null && run.ContainsKey("id") && run.ContainsKey("game")) keys.Add(Convert.ToString(run["game"]) + "|" + Convert.ToString(run["id"]));
-                }
-            return keys;
+            lock (syncLock) { var cur = LoadSync(); cur.Admin = ""; SaveSync(cur); }
+            return Ok();
         }
 
+        object AdminPlayers()
+        {
+            var c = LoadSync();
+            if (c.Admin == "") return Fail("admin");
+            try { return Call(c, "GET", "/v1/admin/players", null); }
+            catch (SyncException e) { return Fail(e.Code == "player" ? "admin" : e.Code); }
+        }
+
+        object AdminDelete(Dictionary<string, object> body)
+        {
+            var c = LoadSync();
+            if (c.Admin == "") return Fail("admin");
+            string player = body.ContainsKey("player") ? Convert.ToString(body["player"]) : "";
+            string game = body.ContainsKey("game") ? Convert.ToString(body["game"]) : "";
+            if (!Regex.IsMatch(player, "^[a-f0-9]{6,16}$")) return Fail("bad player");
+            var b = new Dictionary<string, object> { { "player", player } };
+            if (game != "") b["game"] = game;
+            try { return Call(c, "POST", "/v1/admin/delete", b); }
+            catch (SyncException e) { return Fail(e.Code == "player" ? "admin" : e.Code); }
+        }
         void SyncCycle()
         {
             var c = LoadSync();
