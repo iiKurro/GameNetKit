@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Ban, LoaderCircle, ShieldOff } from "lucide-react";
 import type { ServerResult } from "@/api";
 import type { Key } from "@/i18n";
+import { rangeOf } from "@/lib/cidr";
 import { Button } from "@/components/ui/button";
 import { Status } from "@/components/ui/status";
 import {
@@ -30,8 +31,9 @@ interface Props {
   first?: boolean;
   delay?: number;
   blocked: boolean;
-  onBlock: (s: ServerResult) => Promise<void>;
-  onUnblock: (ip: string) => Promise<void>;
+  /** target = the IP, or a range like 34.165.0.0/16 */
+  onBlock: (target: string) => Promise<void>;
+  onUnblock: () => Promise<void>;
 }
 
 export function ResultCard({ s, t, first, delay = 0, blocked, onBlock, onUnblock }: Props) {
@@ -40,7 +42,7 @@ export function ResultCard({ s, t, first, delay = 0, blocked, onBlock, onUnblock
 
   useEffect(() => {
     if (!confirm) return;
-    const id = setTimeout(() => setConfirm(false), 4000);
+    const id = setTimeout(() => setConfirm(false), 12000);
     return () => clearTimeout(id);
   }, [confirm]);
 
@@ -81,19 +83,22 @@ export function ResultCard({ s, t, first, delay = 0, blocked, onBlock, onUnblock
 
       <div className="mt-auto flex flex-col gap-2 border-t border-border pt-3">
         {blocked ? (
-          <Button variant="secondary" size="sm" disabled={busy} onClick={() => run(() => onUnblock(s.ip))}>
+          <Button variant="secondary" size="sm" disabled={busy} onClick={() => run(() => onUnblock())}>
             {busy ? <LoaderCircle className="animate-spin" /> : <ShieldOff />}
             {busy ? t("blocking") : t("unblock")}
           </Button>
         ) : confirm ? (
           <>
-            <Button variant="destructive" size="sm" disabled={busy} onClick={() => run(() => onBlock(s))}>
+            <Button variant="destructive" size="sm" disabled={busy} onClick={() => run(() => onBlock(rangeOf(s.ip)))}>
               {busy ? <LoaderCircle className="animate-spin" /> : <Ban />}
-              {busy ? t("blocking") : t("blockConfirm")}
+              {busy ? t("blocking") : <>{t("blockRange")} <span className="num">{rangeOf(s.ip)}</span></>}
             </Button>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">{t("blockNote")}</p>
-          </>
-        ) : (
+            <p className="text-[11px] text-success">{t("blockRangeHint")}</p>
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => onBlock(s.ip))}>
+              {t("blockOnlyIp")}
+            </Button>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">{t("blockRangeNote")} {t("blockNote")}</p>
+          </>        ) : (
           <Button variant="outline" size="sm" onClick={() => setConfirm(true)}>
             <Ban /> {t("block")}
           </Button>
