@@ -66,18 +66,8 @@ namespace GameNetKit
         // ------------------------------------------------------------------ real capture
         static int Pktmon(string args, out string output)
         {
-            var psi = new ProcessStartInfo("pktmon.exe", args)
-            {
-                UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true
-            };
-            using (var p = Process.Start(psi))
-            {
-                string o = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-                p.WaitForExit();
-                output = o;
-                return p.ExitCode;
-            }
+            // converting a long capture can take a while; everything else answers within seconds
+            return ProcUtil.Run("pktmon.exe", args, args.StartsWith("etl2txt") ? 240000 : 60000, out output);
         }
 
         // "cod.exe|other.exe" -> every running process with one of these names (a game can ship under more than one exe)
