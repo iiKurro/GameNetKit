@@ -90,13 +90,14 @@ export default function App() {
     setTimeout(() => window.close(), 1500);
   };
 
-  const fwMessage = (code?: string) => (code === "uac" ? t("errBlockUac") : t("errBlockFw"));
+  const fwMessage = (code?: string, detail?: string) =>
+    (code === "uac" ? t("errBlockUac") : t("errBlockFw")) + (detail ? "\n" + detail : "");
 
   // target = a single IP or a range such as 34.165.0.0/16
   const block = useCallback(async (s: ServerResult, gameName: string, target: string) => {
     setFwError("");
     const r = await api.block(target, locationOf(s), gameName).catch(() => ({ ok: false, error: "x" }));
-    if (!r.ok) setFwError(fwMessage(r.error));
+    if (!r.ok) setFwError(fwMessage(r.error, (r as { detail?: string }).detail));
     await refreshBlocks();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshBlocks, lang]);
@@ -104,7 +105,7 @@ export default function App() {
   const unblockTarget = useCallback(async (target: string) => {
     setFwError("");
     const r = await api.unblock(target).catch(() => ({ ok: false, error: "x" }));
-    if (!r.ok) setFwError(fwMessage(r.error));
+    if (!r.ok) setFwError(fwMessage(r.error, (r as { detail?: string }).detail));
     await refreshBlocks();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshBlocks, lang]);
@@ -234,7 +235,7 @@ export default function App() {
 
       {fwError && (
         <div className="enter flex items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          <span>{fwError}</span>
+          <span className="num whitespace-pre-line break-all" dir="auto">{fwError}</span>
           <button className="cursor-pointer opacity-70 hover:opacity-100" onClick={() => setFwError("")} aria-label="close"><X className="size-4" /></button>
         </div>
       )}
