@@ -1,4 +1,4 @@
-﻿@import "tailwindcss";
+@import "tailwindcss";
 
 @theme {
   --font-sans: "Segoe UI", "Tahoma", system-ui, sans-serif;
@@ -19,6 +19,8 @@
 }
 
 html, body, #root { height: 100%; }
+html { overflow-y: auto; overflow-x: hidden; }
+body { overflow-wrap: break-word; }
 body { background: var(--color-background); color: var(--color-foreground); font-family: var(--font-sans); }
 .num { direction: ltr; unicode-bidi: isolate; display: inline-block; }
 @keyframes enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -28,11 +30,11 @@ body { background: var(--color-background); color: var(--color-foreground); font
 /* The parts of a page the browser draws by itself, themed so they belong to the app */
 :root { color-scheme: dark; accent-color: var(--color-primary); }
 ::selection { background: color-mix(in oklab, var(--color-primary) 38%, transparent); color: var(--color-foreground); }
-* { scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 999px; border: 2px solid var(--color-background); }
-::-webkit-scrollbar-thumb:hover { background: var(--color-muted-foreground); }
+/* no scroll bars anywhere: the mouse wheel / touch / keyboard scroll as usual */
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .num, table, select, input { font-variant-numeric: tabular-nums; }
 :focus-visible { outline: 2px solid color-mix(in oklab, var(--color-primary) 75%, transparent); outline-offset: 2px; }
-button:focus-visible, [role=tab]:focus-visible, [role=switch]:focus-visible { outline: none; }
+/* components that draw their own focus ring (Tailwind focus-visible:ring) do not also get the outline; every other button does */
+[class*="focus-visible:"]:focus-visible, [role=tab]:focus-visible, [role=switch]:focus-visible { outline: none; }
 select, input { color-scheme: dark; }
