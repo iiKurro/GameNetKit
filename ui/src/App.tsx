@@ -12,6 +12,7 @@ import { applyDensity, applyTheme, loadDensity, loadTheme, type Density, type Th
 import { copyText, summaryText } from "@/lib/summary";
 import { Scope } from "@/components/Scope";
 import { Welcome } from "@/components/Welcome";
+import { ProcessPicker } from "@/components/ProcessPicker";
 import { cn } from "@/lib/utils";
 import { covers } from "@/lib/cidr";
 import { Button } from "@/components/ui/button";
@@ -62,6 +63,7 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [density, setDensity] = useState<Density>(loadDensity);
   const [welcome, setWelcome] = useState(false);
+  const [picker, setPicker] = useState(false);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const say = useCallback((text: string) => {
     setNotice(text);
@@ -397,6 +399,23 @@ export default function App() {
   const p = state.phase;
   const running = p !== "idle" && p !== "done" && p !== "error";
 
+  // the player says "this program is my game": remember it, then start the scan again so it looks for that program
+  const pickProcess = async (name: string) => {
+    const r = await api.addProcess(game, name).catch(() => null);
+    if (!r || !r.ok) { setPicker(false); setFwError(t("errGeneric")); return; }
+    setPicker(false);
+    await api.cancel().catch(() => {});
+    for (let i = 0; i < 20; i++) {
+      await new Promise((res) => setTimeout(res, 500));
+      const st = await api.state().catch(() => null);
+      if (st && (st.phase === "idle" || st.phase === "error" || st.phase === "done")) break;
+    }
+    loadBasics();
+    const s = await api.start(game).catch(() => null);
+    if (!s || !s.ok) setFwError(t("errStart"));
+    else say(t("pickerSaved"));
+  };
+
   const start = async () => {
     if (!game) return;
     setBusy(true);
@@ -477,7 +496,7 @@ export default function App() {
   // an account that shares with the group but has no password yet must choose one (it is how it is logged into from any PC)
   const needPassword = !!profile?.name && !!sync?.configured && !!sync.hasCode && !sync.hasPassword && !firstRun;
   needPasswordRef.current = needPassword;
-  const modalOpen = welcome || firstRun || needPassword || dialog !== null || adminOpen;
+  const modalOpen = picker || welcome || firstRun || needPassword || dialog !== null || adminOpen;
   const relogin = !!sync?.hasPassword && (sync.error === "player" || sync.error === "taken");
 
   // what the header chip says when sharing has a problem (the details are in Settings)
@@ -731,7 +750,7 @@ export default function App() {
 
               {(p === "idle" || p === "error" || running) && (
                 <div className="enter lift rounded-2xl border border-border bg-card/70 px-4 py-2">
-                  <Scope phase={p === "error" ? "idle" : p} ports={state.ports} secondsLeft={state.secondsLeft} portsText={t("portsSeen")} title={scopeTitle} text={scopeText} game={running ? game : undefined} />
+                  <Scope phase={p === "error" ? "idle" : p} ports={state.ports} secondsLeft={state.secondsLeft} portsText={t("portsSeen")} title={scopeTitle} text={scopeText} game={running ? game : undefined} help={{ label: t("pickerOpen"), onClick: () => setPicker(true) }} />
                 </div>
               )}
 
@@ -802,6 +821,8 @@ export default function App() {
 
       {/* first run (no name yet) or "change name": outside the page, which is inert while this is open */}
       {welcome && <Welcome t={t} rtl={lang === "ar"} onDone={() => setWelcome(false)} />}
+
+      {picker && <ProcessPicker t={t} game={game} onPick={pickProcess} onClose={() => setPicker(false)} />}
 
       {profile && !welcome && (firstRun || needPassword || dialog) && (
         <ProfileDialog
