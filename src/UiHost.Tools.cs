@@ -57,6 +57,69 @@ namespace GameNetKit
 
         void StopGuardIfNotBackground() { if (!Setting("background")) StopGuard(); }
 
+        // ------------------------------------------------------------------ "the game is running but the app does not see it"
+        static readonly HashSet<string> NotGames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "chrome", "msedge", "firefox", "opera", "brave", "discord", "steam", "steamwebhelper", "claude", "code", "obs64", "explorer", "searchhost",
+            "textinputhost", "applicationframehost", "systemsettings", "shellexperiencehost", "startmenuexperiencehost", "runtimebroker", "dwm", "ctfmon",
+            "svchost", "system", "idle", "gamenetkit", "gamenetkit-guard", "teams", "ms-teams", "spotify", "whatsapp", "telegram", "epicgameslauncher",
+            "battle.net", "agent", "ea", "eadesktop", "origin", "ubisoftconnect", "upc", "riotclientservices", "riotclientux", "goxlr app", "overwolf"
+        };
+
+        // running programs that could be the game: they own UDP ports (a game in a match always does) or a window, biggest first
+        object Processes()
+        {
+            var udp = Analyzer.UdpCountsByPid();
+            var rows = new List<Dictionary<string, object>>();
+            int me = Process.GetCurrentProcess().Id;
+            foreach (var p in Process.GetProcesses())
+            {
+                try
+                {
+                    if (p.Id == me || NotGames.Contains(p.ProcessName)) continue;
+                    int ports; udp.TryGetValue(p.Id, out ports);
+                    string title = "";
+                    try { title = p.MainWindowTitle ?? ""; } catch { }
+                    if (ports == 0 && title == "") continue;
+                    int mb = (int)(p.WorkingSet64 / (1024 * 1024));
+                    if (mb < 60) continue;
+                    int score = (ports > 0 ? 100 : 0) + (title != "" ? 30 : 0) + Math.Min(mb / 100, 60);
+                    rows.Add(new Dictionary<string, object>
+                    {
+                        { "name", p.ProcessName + ".exe" }, { "title", title.Length > 80 ? title.Substring(0, 80) : title }, { "mb", mb }, { "udp", ports }, { "score", score }
+                    });
+                }
+                catch { }
+                finally { p.Dispose(); }
+            }
+            var top = rows.OrderByDescending(r => (int)r["score"]).Take(14).ToList();
+            // the likely one: owns several UDP ports, has a window and a game-sized memory footprint
+            var best = top.FirstOrDefault(r => (int)r["udp"] >= 2 && Convert.ToString(r["title"]) != "" && (int)r["mb"] >= 800);
+            foreach (var r in top) r["suggested"] = ReferenceEquals(r, best);
+            return top;
+        }
+
+        // remembers "this program is that game": the scan, the guard and the list all use it from now on
+        object AddGameProcess(Dictionary<string, object> body)
+        {
+            string game = body.ContainsKey("game") ? Convert.ToString(body["game"]) : "";
+            string proc = body.ContainsKey("process") ? Convert.ToString(body["process"]).Trim() : "";
+            if (!System.Text.RegularExpressions.Regex.IsMatch(proc, @"^[A-Za-z0-9_.\- ]{1,64}$")) return Fail("bad process");
+            if (!proc.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) proc += ".exe";
+            if (!Games().Any(g => (string)g["name"] == game)) return Fail("unknown game");
+            lock (fileLock)
+            {
+                var ov = new Dictionary<string, object>();
+                try { if (File.Exists(GameList.OverridesPath)) ov = (Dictionary<string, object>)js.DeserializeObject(File.ReadAllText(GameList.OverridesPath)); } catch { }
+                string have = ov.ContainsKey(game) ? Convert.ToString(ov[game]) : "";
+                if (!have.Split('|').Any(x => string.Equals(x, proc, StringComparison.OrdinalIgnoreCase))) ov[game] = have == "" ? proc : have + "|" + proc;
+                Directory.CreateDirectory(Program.DataDir);
+                File.WriteAllText(GameList.OverridesPath, js.Serialize(ov), new System.Text.UTF8Encoding(false));
+            }
+            Program.Log("game process added: " + game + " -> " + proc);
+            return Ok();
+        }
+
         // ------------------------------------------------------------------ diagnostics (for "copy diagnostics")
         static string Tail(string path, int lines)
         {
