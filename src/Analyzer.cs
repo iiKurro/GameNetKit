@@ -374,6 +374,39 @@ namespace GameNetKit
         [DllImport("iphlpapi.dll", SetLastError = true)]
         static extern uint GetExtendedUdpTable(IntPtr table, ref int size, bool order, int af, int tableClass, uint reserved);
 
+        // how many UDP ports every process owns right now (a game in a match always has some; used to suggest the game's process)
+        public static Dictionary<int, int> UdpCountsByPid()
+        {
+            var d = new Dictionary<int, int>();
+            foreach (int af in new[] { 2, 23 })
+            {
+                int rowSize = af == 2 ? 12 : 28, pidOff = af == 2 ? 8 : 24;
+                for (int attempt = 0; attempt < 3; attempt++)
+                {
+                    int size = 0;
+                    GetExtendedUdpTable(IntPtr.Zero, ref size, true, af, 1, 0);
+                    IntPtr buf = Marshal.AllocHGlobal(size);
+                    try
+                    {
+                        uint rc = GetExtendedUdpTable(buf, ref size, true, af, 1, 0);
+                        if (rc == 122) continue;
+                        if (rc != 0) break;
+                        int n = Marshal.ReadInt32(buf);
+                        IntPtr p = IntPtr.Add(buf, 4);
+                        for (int i = 0; i < n; i++)
+                        {
+                            int pid = Marshal.ReadInt32(p, pidOff);
+                            int c; d.TryGetValue(pid, out c); d[pid] = c + 1;
+                            p = IntPtr.Add(p, rowSize);
+                        }
+                        break;
+                    }
+                    finally { Marshal.FreeHGlobal(buf); }
+                }
+            }
+            return d;
+        }
+
         public static void CollectUdpPorts(HashSet<int> pids, HashSet<int> into)
         {
             CollectUdpPorts(pids, into, 2);    // IPv4
