@@ -21,6 +21,35 @@ namespace GameNetKit
         // where the guard (running from another folder) reads it, so a game added by hand is seen by both.
         public static List<Dictionary<string, object>> Load(string exeDir, JavaScriptSerializer js, bool forGuard)
         {
+            var list = LoadBase(exeDir, js, forGuard);
+            ApplyOverrides(list, js);
+            return list;
+        }
+
+        // processes the player picked for a game ("this is my game") are added to what the list says; both the window and the guard read them
+        public static string OverridesPath { get { return Path.Combine(Program.DataDir, "game-processes.json"); } }
+
+        static void ApplyOverrides(List<Dictionary<string, object>> list, JavaScriptSerializer js)
+        {
+            try
+            {
+                if (!File.Exists(OverridesPath)) return;
+                var ov = (Dictionary<string, object>)js.DeserializeObject(File.ReadAllText(OverridesPath));
+                foreach (var g in list)
+                {
+                    string name = Convert.ToString(g["name"]);
+                    if (!ov.ContainsKey(name)) continue;
+                    string have = Convert.ToString(g["process"]);
+                    foreach (string extra in Convert.ToString(ov[name]).Split('|'))
+                        if (extra.Trim() != "" && !have.Split('|').Any(x => string.Equals(x.Trim(), extra.Trim(), StringComparison.OrdinalIgnoreCase))) have += "|" + extra.Trim();
+                    g["process"] = have;
+                }
+            }
+            catch { }
+        }
+
+        static List<Dictionary<string, object>> LoadBase(string exeDir, JavaScriptSerializer js, bool forGuard)
+        {
             try
             {
                 string p = Path.Combine(exeDir, "games.json");
@@ -39,7 +68,8 @@ namespace GameNetKit
                 Game("Rocket League", "RocketLeague.exe"),
                 Game("Overwatch 2", "Overwatch.exe"),
                 // Call of Duty HQ games all run as cod.exe, so only the game you pick decides which history a scan goes to.
-                Game("Modern Warfare 3", "cod.exe"),
+                // the Game Pass / newer launchers name the same game cod23-cod.exe; both are watched
+                Game("Modern Warfare 3", "cod.exe|cod23-cod.exe"),
                 // Modern Warfare 4 is released on 2026-10-23; its exe name is a guess (same launcher family) until someone checks it.
                 Game("Modern Warfare 4", "cod.exe"),
                 Game("Fortnite", "FortniteClient-Win64-Shipping.exe"),
