@@ -77,18 +77,8 @@ namespace GameNetKit
             return ProcUtil.Run("pktmon.exe", args, args.StartsWith("etl2txt") ? 240000 : 60000, out output);
         }
 
-        // "cod.exe|other.exe" -> every running process with one of these names (a game can ship under more than one exe)
-        static List<Process> Running(string proc)
-        {
-            var list = new List<Process>();
-            foreach (string n in proc.Split('|'))
-            {
-                string name = n.Trim();
-                if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = name.Substring(0, name.Length - 4);
-                if (name != "") list.AddRange(Process.GetProcessesByName(name));
-            }
-            return list;
-        }
+        // the processes of the game (by program name, or by window title when the name is not known; see GameList.Match)
+        static List<Process> Running(string proc) { return GameList.Match(proc); }
 
         static void RunReal(string proc, int top, int pings)
         {
