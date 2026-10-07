@@ -12,6 +12,8 @@ interface Props {
   title: string;
   text: string;
   game?: string;
+  /** shown while the app waits for the game: "the game is running but it does not see it" */
+  help?: { label: string; onClick: () => void };
 }
 
 const SIZE = 320;
@@ -29,7 +31,7 @@ const spot = (n: number) => {
  * The scan "scope": an idle radar before a scan, a faster sweep while the game's traffic is captured (one blip for every game port
  * seen, so the numbers on screen are the real count), and a held ring while the servers are measured.
  */
-export function Scope({ phase, ports, secondsLeft, portsText, title, text, game }: Props) {
+export function Scope({ phase, ports, secondsLeft, portsText, title, text, game, help }: Props) {
   const reduce = useReducedMotion();
   const live = phase === "capturing";
   const wait = phase === "elevating" || phase === "waiting_game" || phase === "ready";
@@ -89,6 +91,11 @@ export function Scope({ phase, ports, secondsLeft, portsText, title, text, game 
         )}
         <h2 className="text-lg font-bold text-balance">{title}</h2>
         <p className="mt-1.5 text-sm leading-relaxed text-pretty text-muted-foreground">{text}</p>
+        {help && phase === "waiting_game" && (
+          <button onClick={help.onClick} className="mt-3 cursor-pointer text-sm font-semibold text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary">
+            {help.label}
+          </button>
+        )}
       </div>
     </div>
   );
