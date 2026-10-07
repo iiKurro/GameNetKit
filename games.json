@@ -1,7 +1,7 @@
 [
   { "name": "Rocket League", "process": "RocketLeague.exe", "enabled": true },
   { "name": "Overwatch 2", "process": "Overwatch.exe", "enabled": true },
-  { "name": "Modern Warfare 3", "process": "cod.exe|cod23-cod.exe", "enabled": true },
+  { "name": "Modern Warfare 3", "process": "cod.exe|cod23-cod.exe|title:Modern Warfare&III", "enabled": true },
   { "name": "Modern Warfare 4", "process": "cod.exe", "enabled": true },
   { "name": "Fortnite", "process": "FortniteClient-Win64-Shipping.exe", "enabled": true }
 ]
