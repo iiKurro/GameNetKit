@@ -59,6 +59,15 @@ export interface AdminPlayer {
   games: { game: string; count: number; last: string }[];
 }
 
+/** a running program that could be the game */
+export interface ProcessRow {
+  name: string;
+  title: string;
+  mb: number;
+  udp: number;
+  suggested: boolean;
+}
+
 export interface BlockEntry {
   ip: string;
   label: string;
@@ -220,6 +229,8 @@ export const api = {
   /** account = name + password: first run (restores the account when the name and password already exist on the server) */
   accountStart: (name: string, password: string, code: string) => call<{ ok: boolean; restored?: boolean; error?: string }>("/api/account/start", { name, password, code }),
   accountPassword: (password: string) => call<{ ok: boolean; error?: string }>("/api/account/password", { password }),
+  processes: () => call<ProcessRow[]>("/api/processes"),
+  addProcess: (game: string, process: string) => call<{ ok: boolean; error?: string }>("/api/games/process", { game, process }),
   notify: (title: string, text: string) => call<{ ok: boolean }>("/api/notify", { title, text }),
   trayLabels: (l: { open: string; guardOn: string; guardOff: string; exit: string }) => call<{ ok: boolean }>("/api/tray/labels", l),
   diagnostics: () => call<{ ok: boolean; text: string }>("/api/diagnostics"),
