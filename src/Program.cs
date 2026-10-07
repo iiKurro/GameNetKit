@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "1.2.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "1.2.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -389,6 +389,8 @@ namespace GameNetKit
                     case "/api/sync/config": result = SyncConfigure(ReadBody(ctx)); break;
                     case "/api/sync/now": result = SyncNow(); break;
                     case "/api/admin/unlock": result = AdminUnlock(ReadBody(ctx)); break;
+                    case "/api/processes": result = Processes(); break;
+                    case "/api/games/process": result = AddGameProcess(ReadBody(ctx)); break;
                     case "/api/notify": result = Notify(ReadBody(ctx)); break;
                     case "/api/tray/labels": result = TrayLabels(ReadBody(ctx)); break;
                     case "/api/diagnostics": result = Diagnostics(); break;
