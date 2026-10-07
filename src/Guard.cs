@@ -69,7 +69,7 @@ namespace GameNetKit
                 Game("Overwatch 2", "Overwatch.exe"),
                 // Call of Duty HQ games all run as cod.exe, so only the game you pick decides which history a scan goes to.
                 // the Game Pass / newer launchers name the same game cod23-cod.exe; both are watched
-                Game("Modern Warfare 3", "cod.exe|cod23-cod.exe"),
+                Game("Modern Warfare 3", "cod.exe|cod23-cod.exe|title:Modern Warfare&III"),
                 // Modern Warfare 4 is released on 2026-10-23; its exe name is a guess (same launcher family) until someone checks it.
                 Game("Modern Warfare 4", "cod.exe"),
                 Game("Fortnite", "FortniteClient-Win64-Shipping.exe"),
@@ -83,23 +83,52 @@ namespace GameNetKit
             return new Dictionary<string, object> { { "name", name }, { "process", process }, { "enabled", true } };
         }
 
-        // "cod.exe|other.exe" -> every running process with one of these names
-        public static bool IsRunning(string processField)
+        // "cod.exe|other.exe|title:Modern Warfare&III" -> every running process with one of these names, and, when none is found by name,
+        // the programs whose window title contains every word after "title:" (separated by &). Some launchers give the same game another
+        // program name, and the window title is what Task Manager shows as the game's name.
+        public static List<Process> Match(string processField)
         {
+            var list = new List<Process>();
+            var titles = new List<string[]>();
             foreach (string n in (processField ?? "").Split('|'))
             {
                 string name = n.Trim();
+                if (name.StartsWith("title:", StringComparison.OrdinalIgnoreCase))
+                {
+                    titles.Add(name.Substring(6).Split('&').Select(x => x.Trim()).Where(x => x != "").ToArray());
+                    continue;
+                }
                 if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = name.Substring(0, name.Length - 4);
                 if (name == "") continue;
-                Process[] ps = Process.GetProcessesByName(name);
-                bool any = ps.Length > 0;
-                foreach (Process p in ps) p.Dispose();
-                if (any) return true;
+                list.AddRange(Process.GetProcessesByName(name));
             }
-            return false;
+            if (list.Count == 0 && titles.Count > 0)
+            {
+                foreach (Process p in Process.GetProcesses())
+                {
+                    bool keep = false;
+                    try
+                    {
+                        string t = p.MainWindowTitle;
+                        if (!string.IsNullOrEmpty(t))
+                            foreach (var words in titles)
+                                if (words.Length > 0 && words.All(w => t.IndexOf(w, StringComparison.OrdinalIgnoreCase) >= 0)) keep = true;
+                    }
+                    catch { }
+                    if (keep) list.Add(p); else p.Dispose();
+                }
+            }
+            return list;
+        }
+
+        public static bool IsRunning(string processField)
+        {
+            var found = Match(processField);
+            bool any = found.Count > 0;
+            foreach (Process p in found) p.Dispose();
+            return any;
         }
     }
-
     public static class Guard
     {
         public static string StatePath { get { return Path.Combine(Program.DataDir, "guard.json"); } }
