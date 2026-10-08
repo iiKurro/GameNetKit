@@ -199,6 +199,9 @@ namespace GameNetKit
         static string stError = "";
         static volatile bool stopHeart;
 
+        static List<string> stRegion = new List<string>();
+        static void SetRegion(IEnumerable<string> games) { lock (stLock) stRegion = games.ToList(); }
+
         static void SetState(List<string> running, IEnumerable<string> applied, string error)
         {
             lock (stLock) { stRunning = running; stApplied = applied.ToList(); stError = error; }
@@ -212,7 +215,7 @@ namespace GameNetKit
                 {
                     { "pid", Process.GetCurrentProcess().Id },
                     { "time", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) },
-                    { "running", stRunning }, { "applied", stApplied }, { "error", stError }, { "version", Program.Version }
+                    { "running", stRunning }, { "applied", stApplied }, { "error", stError }, { "version", Program.Version }, { "regionLocked", stRegion }
                 };
             string tmp = StatePath + ".tmp";
             try { File.WriteAllText(tmp, Js.Serialize(st), new UTF8Encoding(false)); File.Copy(tmp, StatePath, true); } catch { }
@@ -269,14 +272,56 @@ namespace GameNetKit
                 heart.Start();
 
                 var blocks = new Dictionary<string, string>();
+                // region lock: game -> program path the rules were made for; a failed try waits a minute before the next
+                var regionOn = new Dictionary<string, string>();
+                var regionRetry = new Dictionary<string, DateTime>();
+                List<string> regionRanges = null;
+                if (!Program.DemoMode) { string o0; RegionLock.Remove(null, out o0); }     // rules a dead guard left behind
                 while (!File.Exists(StopPath))
                 {
                     try
                     {
                         var games = GameList.Load(exeDir, Js, true);
                         var running = new List<string>();
+                        var exePaths = new Dictionary<string, string>();
                         foreach (var g in games)
-                            if (GameList.IsRunning(Convert.ToString(g["process"]))) running.Add(Convert.ToString(g["name"]));
+                        {
+                            string gname = Convert.ToString(g["name"]);
+                            var found = GameList.Match(Convert.ToString(g["process"]));
+                            if (found.Count > 0)
+                            {
+                                running.Add(gname);
+                                try { exePaths[gname] = found[0].MainModule.FileName; } catch { }
+                            }
+                            foreach (Process fp in found) fp.Dispose();
+                        }
+
+                        // region lock: on while a locked game runs, off when it stops or the switch is turned off
+                        if (!Program.DemoMode)
+                        {
+                            var locked = RegionLock.LockedGames();
+                            foreach (string gname in running.Where(x => locked.Contains(x) && exePaths.ContainsKey(x)).ToList())
+                            {
+                                string path = exePaths[gname], was;
+                                if (regionOn.TryGetValue(gname, out was) && was == path) continue;
+                                DateTime again;
+                                if (regionRetry.TryGetValue(gname, out again) && DateTime.Now < again) continue;
+                                string why = "", o1 = "";
+                                if (regionRanges == null) regionRanges = RegionLock.BlockedRanges(out why);
+                                int rc = regionRanges == null ? 1 : RegionLock.Apply(gname, path, regionRanges, out o1);
+                                Log("region lock " + gname + " rc=" + rc + " ranges=" + (regionRanges == null ? 0 : regionRanges.Count) + " " + why + " " + o1.Trim());
+                                if (rc == 0) { regionOn[gname] = path; regionRetry.Remove(gname); error = ""; }
+                                else { regionRetry[gname] = DateTime.Now.AddMinutes(1); error = "region lock failed for " + gname; if (regionRanges != null && regionRanges.Count == 0) regionRanges = null; }
+                            }
+                            foreach (string gname in regionOn.Keys.Where(x => !running.Contains(x) || !locked.Contains(x)).ToList())
+                            {
+                                string o2;
+                                RegionLock.Remove(gname, out o2);
+                                regionOn.Remove(gname);
+                                Log("region lock removed for " + gname);
+                            }
+                            SetRegion(regionOn.Keys);
+                        }
 
                         var fresh = GameBlocks();
                         if (fresh != null) blocks = fresh;   // unreadable file: keep the last good list instead of dropping every block mid-match
@@ -310,6 +355,7 @@ namespace GameNetKit
                     for (int i = 0; i < 4 && !File.Exists(StopPath); i++) Thread.Sleep(500);
                 }
 
+                if (!Program.DemoMode && regionOn.Count > 0) { string o3; RegionLock.Remove(null, out o3); Log("region lock removed (guard stopped)"); }
                 foreach (string t in applied.ToList()) { if (!Program.DemoMode) Firewall.Remove(t); Log("removed " + t + " (guard stopped)"); }
                 SaveApplied(new string[0]);
                 stopHeart = true; heart.Join(1500);

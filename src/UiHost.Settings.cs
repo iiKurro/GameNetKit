@@ -19,7 +19,7 @@ namespace GameNetKit
             lock (settingsLock)
             {
                 var s = new Dictionary<string, object> { { "guardAuto", false }, { "background", true }, { "startup", false }, { "notify", true }, { "sound", true },
-                    { "overlayKey", OverlayLive.DefaultKey }, { "overlayCorner", "tr" } };
+                    { "overlayKey", OverlayLive.DefaultKey }, { "overlayCorner", "tr" }, { "regionLock", new Dictionary<string, object>() } };
                 try
                 {
                     if (File.Exists(SettingsPath))
@@ -27,6 +27,7 @@ namespace GameNetKit
                         var d = (Dictionary<string, object>)js.DeserializeObject(File.ReadAllText(SettingsPath));
                         foreach (string k in new[] { "guardAuto", "background", "startup", "notify", "sound" })
                             if (d.ContainsKey(k) && d[k] is bool) s[k] = d[k];
+                        if (d.ContainsKey("regionLock") && d["regionLock"] is Dictionary<string, object>) s["regionLock"] = d["regionLock"];
                         if (d.ContainsKey("overlayKey") && d["overlayKey"] is string) s["overlayKey"] = d["overlayKey"];
                         if (d.ContainsKey("overlayCorner") && d["overlayCorner"] is string && IsCorner((string)d["overlayCorner"])) s["overlayCorner"] = d["overlayCorner"];
                     }
@@ -137,6 +138,16 @@ namespace GameNetKit
             {
                 var r = SetStartup((bool)body["startup"]);
                 if (!(bool)r["ok"]) return r;
+            }
+
+            // region lock: { "<game>": true|false } for one or more games; the guard picks it up within a couple of seconds
+            if (body.ContainsKey("regionLock") && body["regionLock"] is Dictionary<string, object>)
+            {
+                var rl = new Dictionary<string, object>((Dictionary<string, object>)s["regionLock"]);
+                foreach (var kv in (Dictionary<string, object>)body["regionLock"])
+                    if (kv.Value is bool && kv.Key.Length > 0 && kv.Key.Length < 80) { if ((bool)kv.Value) rl[kv.Key] = true; else rl.Remove(kv.Key); }
+                s["regionLock"] = rl;
+                WriteSettings(s);
             }
 
             foreach (string k in new[] { "notify", "sound" })

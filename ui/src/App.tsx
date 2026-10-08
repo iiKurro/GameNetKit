@@ -402,6 +402,12 @@ export default function App() {
     return !r ? "error" : r.ok === false ? (r.error ?? "error") : "";
   }, [refreshSettings]);
 
+  // region lock of one game: the guard (elevated, already running) sees the switch within a couple of seconds, so no prompt here
+  const changeRegionLock = useCallback(async (game: string, on: boolean) => {
+    await api.settingsSet({ regionLock: { [game]: on } }).catch(() => null);
+    await refreshSettings();
+  }, [refreshSettings]);
+
   // after an app update the installed copy of the guard is the old one until it is reinstalled
   const updateGuard = useCallback(async () => {
     setFwError("");
@@ -705,6 +711,8 @@ export default function App() {
             busyKey={settingBusy}
             onChange={changeSetting}
             onOverlay={changeOverlay}
+            games={info?.games.filter((g) => g.enabled).map((g) => g.name) ?? []}
+            onRegionLock={changeRegionLock}
             guard={guard}
             sync={sync}
             onSyncToggle={toggleSync}

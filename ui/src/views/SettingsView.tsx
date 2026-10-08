@@ -34,6 +34,9 @@ interface Props {
   busyKey: string;
   onChange: (key: "guardAuto" | "background" | "startup" | "notify" | "sound", value: boolean) => void;
   onOverlay: (patch: Partial<Pick<Settings, "overlayKey" | "overlayCorner" | "overlayVisible">>) => Promise<string>;
+  /** the games the region lock can be set for, and the switch itself */
+  games: string[];
+  onRegionLock: (game: string, on: boolean) => void;
   guard: GuardState;
   sync: SyncState | null;
   onSyncToggle: (enabled: boolean) => void;
@@ -170,7 +173,7 @@ function Alerts({ t, settings, busyKey, onChange }: Props) {
   );
 }
 
-function Protect({ t, settings, busyKey, onChange, guard }: Props) {
+function Protect({ t, settings, busyKey, onChange, guard, games, onRegionLock }: Props) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex">
@@ -193,6 +196,28 @@ function Protect({ t, settings, busyKey, onChange, guard }: Props) {
           {settings.startup ? (settings.startupDisabled ? t("setStartOffByUser") : t("setStartListed")) : t("setNoteAdmin")}
         </SettingRow>
       </SettingGroup>
+
+      {games.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-extrabold">{t("rlTitle")}</h3>
+          <p className="text-xs leading-relaxed text-muted-foreground">{t("rlHint")}</p>
+          <SettingGroup>
+            {games.map((g, i) => {
+              const on = !!settings.regionLock?.[g];
+              const active = !!guard.regionLocked?.includes(g);
+              return (
+                <SettingRow
+                  key={g}
+                  id={`set-rl-${i}`} title={g} hint={active ? t("rlActive") : on ? (guard.running ? t("rlWaiting") : t("rlNeedsGuard")) : t("rlOff")}
+                  tone={on && !guard.running ? "warning" : "normal"}
+                  control={<Switch checked={on} aria-labelledby={`set-rl-${i}`} onChange={(v) => onRegionLock(g, v)} />}
+                />
+              );
+            })}
+          </SettingGroup>
+          <p className="text-xs leading-relaxed text-muted-foreground">{t("rlWarn")}</p>
+        </div>
+      )}
     </div>
   );
 }

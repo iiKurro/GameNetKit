@@ -120,6 +120,8 @@ export interface Settings {
   overlayKey: string;
   overlayCorner: "tl" | "tr" | "bl" | "br";
   overlayVisible: boolean;
+  /** games kept to Middle East servers while they run (only the true ones are listed) */
+  regionLock?: Record<string, boolean>;
 }
 
 /** automatic sharing with the group server */
@@ -149,6 +151,8 @@ export interface GuardState {
   games: string[];
   /** targets the guard has switched on right now */
   applied: string[];
+  /** games whose region lock is switched on at this moment */
+  regionLocked?: string[];
 }
 
 export interface RunSummary {
@@ -253,7 +257,7 @@ export const api = {
   adminDelete: (player: string, game = "", run = "") => call<{ ok: boolean; removed?: number; error?: string }>("/api/admin/delete", { player, game, run }),
   guardUpdate: () => call<{ ok: boolean; error?: string; detail?: string }>("/api/guard/update", {}),
   settings: () => call<Settings>("/api/settings"),
-  settingsSet: (patch: Partial<Pick<Settings, "guardAuto" | "background" | "startup" | "notify" | "sound" | "overlayKey" | "overlayCorner" | "overlayVisible">>) =>
+  settingsSet: (patch: Partial<Pick<Settings, "guardAuto" | "background" | "startup" | "notify" | "sound" | "overlayKey" | "overlayCorner" | "overlayVisible" | "regionLock">>) =>
     call<Settings & { ok?: boolean; error?: string; detail?: string }>("/api/settings/set", patch),
   unblock: (ip: string) => call<{ ok: boolean; error?: string; detail?: string }>("/api/unblock", { ip }),
   // history is always per game: scans of different games are never mixed

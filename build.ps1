@@ -1,4 +1,4 @@
-﻿# Builds dist\GameNetKit.exe: web UI (vite) -> single html -> embedded in a C# exe compiled with the csc that ships with Windows.
+# Builds dist\GameNetKit.exe: web UI (vite) -> single html -> embedded in a C# exe compiled with the csc that ships with Windows.
 # The app's own window uses WebView2: its SDK files come from the official NuGet package (pinned version, checked against a known hash)
 # and are embedded in the exe, so nothing has to sit beside it.
 $ErrorActionPreference = 'Stop'
@@ -47,7 +47,7 @@ $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
     /resource:"$wv\WebView2Loader.x64.dll,WebView2Loader.x64.dll" /resource:"$wv\WebView2Loader.x86.dll,WebView2Loader.x86.dll" `
     /reference:"$wv\Microsoft.Web.WebView2.Core.dll" /reference:"$wv\Microsoft.Web.WebView2.WinForms.dll" `
     /reference:System.Web.Extensions.dll /reference:System.Core.dll /reference:System.Management.dll /reference:System.Security.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll `
-    "$root\src\Program.cs" "$root\src\UiHost.Extra.cs" "$root\src\Worker.cs" "$root\src\Analyzer.cs" "$root\src\Firewall.cs" "$root\src\Guard.cs" "$root\src\UiHost.People.cs" "$root\src\UiHost.Window.cs" "$root\src\ProcUtil.cs" "$root\src\GuardInstall.cs" "$root\src\UiHost.Settings.cs" "$root\src\UiHost.Sync.cs" "$root\src\AssemblyInfo.cs" "$root\src\Tray.cs" "$root\src\Overlay.cs" "$root\src\OverlayLive.cs" "$root\src\UiHost.Tools.cs" "$root\src\UiHost.Overlay.cs" "$root\src\WebHost.cs" "$root\src\UiHost.Art.cs"
+    "$root\src\Program.cs" "$root\src\UiHost.Extra.cs" "$root\src\Worker.cs" "$root\src\Analyzer.cs" "$root\src\Firewall.cs" "$root\src\Guard.cs" "$root\src\UiHost.People.cs" "$root\src\UiHost.Window.cs" "$root\src\ProcUtil.cs" "$root\src\GuardInstall.cs" "$root\src\UiHost.Settings.cs" "$root\src\UiHost.Sync.cs" "$root\src\AssemblyInfo.cs" "$root\src\Tray.cs" "$root\src\Overlay.cs" "$root\src\OverlayLive.cs" "$root\src\UiHost.Tools.cs" "$root\src\UiHost.Overlay.cs" "$root\src\WebHost.cs" "$root\src\UiHost.Art.cs" "$root\src\RegionLock.cs"
 if ($LASTEXITCODE -ne 0) { throw 'csc failed' }
 Copy-Item "$root\games.json", "$root\config.json" $dist -Force
 Get-ChildItem $dist | Select-Object Name, Length

@@ -213,6 +213,7 @@ namespace GameNetKit
                 st["running"] = fresh && alive;
                 st["games"] = g["running"];
                 st["applied"] = g["applied"];
+                st["regionLocked"] = g.ContainsKey("regionLocked") ? g["regionLocked"] : new object[0];
                 st["error"] = g.ContainsKey("error") ? g["error"] : "";
                 st["version"] = g.ContainsKey("version") ? g["version"] : "";
             }
