@@ -1,5 +1,6 @@
 Notes of the release being published. Edit this file before pushing a new version tag.
 
-- In-game overlay: a small panel over the game (windowed or borderless) with the live ping, jitter and loss of the server of your latest scan. Ctrl+Alt+P shows it (change the shortcut and corner in Settings); press it again for a New scan command you run with the number key or a click.
-- Scans no longer ask for administrator approval every time: the first scan sets up a scheduled task, and later scans start silently, also from the overlay.
-- Servers located in Tel Aviv show as Palestine with the Palestinian flag.
+- The app now opens in its own GameNetKit window (WebView2) instead of an Edge window: its own icon in the taskbar and Task Manager, and a title bar that follows the light and dark theme. If WebView2 is missing it falls back to the Edge window.
+- Settings are a full page with sections (General, Alerts, Protection, In-game panel, Sharing and account, About) instead of one long list.
+- The intro video is inside the app: on the scan page and in Settings > About.
+- The number of saved scans is shown beside each game.

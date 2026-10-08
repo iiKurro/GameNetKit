@@ -42,7 +42,8 @@ namespace GameNetKit
         {
             try
             {
-                if (!FocusExistingWindow()) OpenWindow("http://127.0.0.1:" + port + "/?t=" + token);
+                if (WebHost.Active) WebHost.Bring();
+                else if (!FocusExistingWindow()) OpenWindow("http://127.0.0.1:" + port + "/?t=" + token);
             }
             catch (Exception e) { Program.Log("tray open: " + e.Message); }
         }

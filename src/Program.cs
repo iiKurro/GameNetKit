@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "1.3.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "1.4.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -263,49 +263,74 @@ namespace GameNetKit
                         catch (Exception e) { Program.Log("guard auto-start error: " + e.Message); }
                     });
 
-                // windows left over from an earlier run still point at a dead server (that is the "frozen window"): close them first
                 bool useWindow = !args.ContainsKey("nowindow");
-                if (useWindow) KillStaleWindows();
+                // the app's own window (WebView2) when this PC has the engine; otherwise an Edge / Chrome app window
+                bool hostMode = useWindow && !args.ContainsKey("edge") && WebHost.Available();
+                if (useWindow && !hostMode) Program.Log("own window not available (" + WebHost.LastError + "): using Edge / Chrome");
+                // windows left over from an earlier run still point at a dead server (that is the "frozen window"): close them first
+                if (useWindow && !hostMode) KillStaleWindows();
                 if (useWindow) Tray.Start(exePath, TrayOpen, TrayExit, GuardRunning, ApplyOverlaySettings);
-                Process browser = useWindow ? OpenWindow("http://127.0.0.1:" + port + "/?t=" + token) : null;
-                browserProc = browser;
+                string url = "http://127.0.0.1:" + port + "/?t=" + token;
+                if (useWindow && !hostMode) { browserProc = OpenWindow(url); }
                 DateTime started = DateTime.Now;
                 DateTime lastWindowSeen = DateTime.Now;
                 DateTime nextCheck = DateTime.Now.AddSeconds(5);
                 string reason = "";
+                bool hostClosed = false, edgeFallback = false;
 
-                // The server lives as long as its window does. The window is found by its private profile folder, NOT through the
-                // process we started: msedge.exe often hands the window to another process and exits at once, which used to make
-                // the server quit while the window was still open. A missed heartbeat (sleep, minimized, throttled timers) no longer ends it.
-                while (true)
+                // The server lives as long as its window does. With the app's own window that is simply "was it closed". With an Edge window it is
+                // found by its private profile folder, NOT through the process we started: msedge.exe often hands the window to another
+                // process and exits at once. A missed heartbeat (sleep, minimized, throttled timers) no longer ends it.
+                ThreadStart serverLoop = delegate
                 {
-                    Thread.Sleep(1000);
-                    bool busy = IsWorkerBusy();
-                    if (useWindow && DateTime.Now >= nextCheck)
+                    while (true)
                     {
-                        nextCheck = DateTime.Now.AddSeconds(5);
-                        if (WindowAlive()) lastWindowSeen = DateTime.Now;
-                    }
-                    bool windowGone = useWindow && (DateTime.Now - started).TotalSeconds > 45 && (DateTime.Now - lastWindowSeen).TotalSeconds > 20;
-                    if (!busy)
-                    {
-                        if (windowGone) { reason = "window closed"; break; }
-                        if (!useWindow)
+                        Thread.Sleep(1000);
+                        bool busy = IsWorkerBusy();
+                        bool edgeWindow = useWindow && (!hostMode || edgeFallback);
+                        if (edgeWindow && DateTime.Now >= nextCheck)
                         {
-                            if (seenBeat && (DateTime.Now - lastBeat).TotalSeconds > 120) { reason = "no heartbeat"; break; }
-                            if (!seenBeat && (DateTime.Now - started).TotalSeconds > 90) { reason = "nothing connected"; break; }
+                            nextCheck = DateTime.Now.AddSeconds(5);
+                            if (WindowAlive()) lastWindowSeen = DateTime.Now;
+                        }
+                        bool windowGone = hostMode && !edgeFallback ? hostClosed : edgeWindow && (DateTime.Now - started).TotalSeconds > 45 && (DateTime.Now - lastWindowSeen).TotalSeconds > 20;
+                        if (!busy)
+                        {
+                            if (windowGone) { reason = "window closed"; break; }
+                            if (!useWindow)
+                            {
+                                if (seenBeat && (DateTime.Now - lastBeat).TotalSeconds > 120) { reason = "no heartbeat"; break; }
+                                if (!seenBeat && (DateTime.Now - started).TotalSeconds > 90) { reason = "nothing connected"; break; }
+                            }
+                        }
+                        else if (windowGone)
+                        {
+                            // user closed the window in the middle of a run: stop the worker
+                            try { File.WriteAllText(Path.Combine(Program.DataDir, "cancel.flag"), "1"); } catch { }
+                            Thread.Sleep(3000);
+                            reason = "window closed during a scan";
+                            break;
                         }
                     }
-                    else if (windowGone)
+                    if (hostMode) WebHost.Quit();
+                };
+
+                if (hostMode)
+                {
+                    // the engine could not start after all: carry on with an Edge / Chrome window
+                    WebHost.Fallback = delegate
                     {
-                        // user closed the window in the middle of a run: stop the worker
-                        try { File.WriteAllText(Path.Combine(Program.DataDir, "cancel.flag"), "1"); } catch { }
-                        Thread.Sleep(3000);
-                        reason = "window closed during a scan";
-                        break;
-                    }
+                        edgeFallback = true; started = DateTime.Now; lastWindowSeen = DateTime.Now;
+                        Program.Log("own window failed (" + WebHost.LastError + "): using Edge / Chrome");
+                        KillStaleWindows();
+                        browserProc = OpenWindow(url);
+                    };
+                    var loopThread = new Thread(serverLoop) { Name = "server-loop" };
+                    loopThread.Start();
+                    WebHost.Run(url, delegate { if (!edgeFallback) hostClosed = true; });      // the window lives on this (main) thread
+                    loopThread.Join();
                 }
-                Program.Log("server stopped: " + reason);
+                else serverLoop();                Program.Log("server stopped: " + reason);
                 // "background" off = nothing may keep running once the window is gone, so the guard goes too (and comes back next time if it is remembered)
                 if (!Setting("background")) { StopGuard(); Program.Log("guard stopped because background mode is off"); }
                 Tray.Stop();
@@ -405,6 +430,12 @@ namespace GameNetKit
                     Send(ctx, 200, "text/html; charset=utf-8", page);
                     return;
                 }
+                if (path == "/promo.mp4")
+                {
+                    if (ctx.Request.QueryString["t"] != token) { Send(ctx, 403, "text/plain", "forbidden"); return; }
+                    SendPromo(ctx);
+                    return;
+                }
                 if (!path.StartsWith("/api/") || ctx.Request.Headers["X-Token"] != token) { Send(ctx, 403, "text/plain", "forbidden"); return; }
 
                 object result;
@@ -464,6 +495,48 @@ namespace GameNetKit
             {
                 try { Send(ctx, 500, "application/json", js.Serialize(new Dictionary<string, object> { { "ok", false }, { "error", e.Message } })); } catch { }
             }
+        }
+
+        // the intro video lives inside the exe; the player asks for pieces of it ("Range"), which is what makes seeking work
+        static byte[] promo;
+        static readonly object promoLock = new object();
+
+        static void SendPromo(HttpListenerContext ctx)
+        {
+            lock (promoLock)
+            {
+                if (promo == null)
+                    using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("promo.mp4"))
+                    {
+                        if (s == null) { Send(ctx, 404, "text/plain", "not found"); return; }
+                        promo = new byte[s.Length];
+                        int read = 0; while (read < promo.Length) { int n = s.Read(promo, read, promo.Length - read); if (n <= 0) break; read += n; }
+                    }
+            }
+            long total = promo.Length, from = 0, to = total - 1;
+            int status = 200;
+            string range = ctx.Request.Headers["Range"];
+            if (!string.IsNullOrEmpty(range) && range.StartsWith("bytes=", StringComparison.OrdinalIgnoreCase))
+            {
+                string[] parts = range.Substring(6).Split('-');
+                long a, b;
+                if (parts.Length == 2 && (parts[0] == "" ? false : long.TryParse(parts[0], out a)))
+                {
+                    from = long.Parse(parts[0]);
+                    if (parts[1] != "" && long.TryParse(parts[1], out b)) to = Math.Min(b, total - 1);
+                    if (from >= total || from > to) { ctx.Response.StatusCode = 416; ctx.Response.Headers["Content-Range"] = "bytes */" + total; ctx.Response.Close(); return; }
+                    status = 206;
+                }
+            }
+            long length = to - from + 1;
+            ctx.Response.StatusCode = status;
+            ctx.Response.ContentType = "video/mp4";
+            ctx.Response.Headers["Accept-Ranges"] = "bytes";
+            ctx.Response.Headers["Cache-Control"] = "private, max-age=3600";
+            if (status == 206) ctx.Response.Headers["Content-Range"] = "bytes " + from + "-" + to + "/" + total;
+            ctx.Response.ContentLength64 = length;
+            try { ctx.Response.OutputStream.Write(promo, (int)from, (int)length); } catch { }
+            try { ctx.Response.Close(); } catch { }
         }
 
         static void Send(HttpListenerContext ctx, int code, string type, string body)

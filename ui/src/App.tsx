@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Ban, Check, Copy, Download, FolderOpen, Gamepad2, History as HistoryIcon, Languages, Lightbulb, LockKeyhole, Moon, Play, Radar, RefreshCw, ShieldCheck, Square, Sun, UserRound, X } from "lucide-react";
+import { Activity, Ban, Copy, Download, FolderOpen, Gamepad2, History as HistoryIcon, Lightbulb, LockKeyhole, Moon, Play, Radar, RefreshCw, Settings2, ShieldCheck, Square, Sun, UserRound, X } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { ProfileDialog } from "@/components/ProfileDialog";
 import { AdminPanel } from "@/components/AdminPanel";
 import { motion } from "motion/react";
 import { AnimatedTabs } from "@/components/ui/animated-tabs";
-import { SettingsPopover } from "@/components/SettingsPopover";
+import { SettingsView } from "@/views/SettingsView";
+import { PromoPlayer } from "@/components/PromoPlayer";
 import { api, type BlockEntry, type GuardState, type Info, type Person, type Phase, type Profile, type RunSummary, type Settings, type SyncState, type ServerResult, type State, type UpdateInfo } from "@/api";
 import { makeT, type Lang } from "@/i18n";
 import { applyDensity, applyTheme, loadDensity, loadTheme, type Density, type Theme } from "@/lib/prefs";
@@ -64,6 +65,7 @@ export default function App() {
   const [density, setDensity] = useState<Density>(loadDensity);
   const [welcome, setWelcome] = useState(false);
   const [picker, setPicker] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const say = useCallback((text: string) => {
     setNotice(text);
@@ -543,31 +545,13 @@ export default function App() {
             {updPhase === "idle" && upd?.hasUpdate && <Status variant="warning" pulse>{t("updateAvail")} <span className="num">{upd.latest}</span></Status>}
             {updPhase === "idle" && upd?.error && <Status variant="error">{t("updateFail")}</Status>}
             <span className="mx-0.5 hidden h-5 w-px bg-border sm:block" aria-hidden />
-            <Button variant="ghost" size="sm" className="size-8 px-0" onClick={checkUpdate} disabled={updPhase !== "idle"} aria-label={t("checkUpdate")} title={upd && !upd.error && !upd.hasUpdate ? `${t("checkUpdate")} · ${t("upToDate")}` : t("checkUpdate")}>
-              <RefreshCw className={cn(updPhase === "checking" && "animate-spin")} />
-            </Button>
             <Button variant="ghost" size="sm" className="size-8 px-0" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? t("themeToLight") : t("themeToDark")} title={theme === "dark" ? t("themeToLight") : t("themeToDark")}>
               {theme === "dark" ? <Sun /> : <Moon />}
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setLang(lang === "ar" ? "en" : "ar")}>
-              <Languages />
-              {t("lang")}
-            </Button>
             {settings && (
-              <SettingsPopover
-                t={t}
-                settings={settings}
-                busyKey={settingBusy}
-                onChange={changeSetting}
-                sync={sync}
-                onSyncToggle={toggleSync}
-                onChangeCode={() => setDialog("code")}
-                density={density}
-                onDensity={(d) => setDensity(d)}
-                onDiagnostics={copyDiagnostics}
-                onWelcome={() => setWelcome(true)}
-                onOverlay={changeOverlay}
-              />
+              <Button variant={settingsOpen ? "secondary" : "ghost"} size="sm" aria-pressed={settingsOpen} onClick={() => setSettingsOpen((o) => !o)}>
+                <Settings2 /> {t("settingsTitle")}
+              </Button>
             )}
           </div>
         </header>
@@ -599,16 +583,18 @@ export default function App() {
           </div>
         )}
 
-        {/* tabs */}
-        <AnimatedTabs
-          tabs={tabs.map((x) => {
-            const Icon = x.icon;
-            return { id: x.id, label: x.label, icon: <Icon />, count: x.count, countTone: x.id === "blocked" ? ("danger" as const) : ("neutral" as const) };
-          })}
-          active={tab}
-          onChange={(id) => setTab(id as Tab)}
-          label="GameNetKit"
-        />
+        {/* tabs (the settings page replaces them while it is open) */}
+        {!settingsOpen && (
+          <AnimatedTabs
+            tabs={tabs.map((x) => {
+              const Icon = x.icon;
+              return { id: x.id, label: x.label, icon: <Icon />, count: x.count, countTone: x.id === "blocked" ? ("danger" as const) : ("neutral" as const) };
+            })}
+            active={tab}
+            onChange={(id) => setTab(id as Tab)}
+            label="GameNetKit"
+          />
+        )}
 
         {settings && guard.running && guard.version && info && guard.version !== info.version && settings.taskInstalled && (
           <div className="enter flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 p-4">
@@ -638,6 +624,32 @@ export default function App() {
 
         {/* the new section is mounted at once and eases in (continuity). No "wait for the old one to leave": if an animation ever
             stalls (minimized window), the content must still be there and usable. */}
+        {settingsOpen && settings && (
+          <SettingsView
+            t={t}
+            onBack={() => setSettingsOpen(false)}
+            lang={lang} onLang={setLang}
+            theme={theme} onTheme={setTheme}
+            density={density} onDensity={setDensity}
+            settings={settings}
+            busyKey={settingBusy}
+            onChange={changeSetting}
+            onOverlay={changeOverlay}
+            guard={guard}
+            sync={sync}
+            onSyncToggle={toggleSync}
+            onChangeCode={() => setDialog("code")}
+            onChangePassword={() => setDialog("password")}
+            profile={profile}
+            version={info?.version ?? ""}
+            upd={upd}
+            updPhase={updPhase}
+            onCheckUpdate={checkUpdate}
+            onDiagnostics={copyDiagnostics}
+            onWelcome={() => setWelcome(true)}
+          />
+        )}
+        {!settingsOpen && (
         <motion.div
           key={tab}
           className="flex flex-1 flex-col gap-5"
@@ -705,6 +717,9 @@ export default function App() {
                     >
                       <Gamepad2 className={cn("size-4", game === g.name ? "text-primary" : "text-muted-foreground")} />
                       <span className="text-sm font-medium">{g.name}</span>
+                      {(counts[g.name] ?? 0) > 0 && (
+                        <span className="num ms-auto rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground" title={`${t("tabHistory")}: ${counts[g.name]}`}>{counts[g.name]}</span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -808,19 +823,23 @@ export default function App() {
                 </>
               )}
 
-              <div className="hide-compact rounded-2xl border border-border bg-card/60 p-4">
-                <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                  <ShieldCheck className="size-4 text-primary" /> {t("howTitle")}
+              <div className="hide-compact grid items-stretch gap-4 md:grid-cols-[1fr_minmax(0,320px)]">
+                <div className="rounded-2xl border border-border bg-card/60 p-4">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                    <ShieldCheck className="size-4 text-primary" /> {t("howTitle")}
+                  </div>
+                  <ul className="space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+                    <li>• {t("how1")}</li>
+                    <li>• {t("how2")}</li>
+                    <li>• {t("how3")}</li>
+                  </ul>
                 </div>
-                <ul className="space-y-1 text-xs leading-relaxed text-muted-foreground">
-                  <li>• {t("how1")}</li>
-                  <li>• {t("how2")}</li>
-                  <li>• {t("how3")}</li>
-                </ul>
+                <PromoPlayer t={t} compact className="min-h-[150px]" />
               </div>
             </section>          </main>
         )}
         </motion.div>
+        )}
       </div>
 
       {adminOpen && sync?.configured && (

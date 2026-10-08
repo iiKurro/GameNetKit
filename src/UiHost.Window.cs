@@ -1,4 +1,4 @@
-// UiHost part 4: finding (and cleaning up) the app window by its private browser profile folder.
+﻿// UiHost part 4: finding (and cleaning up) the app window by its private browser profile folder.
 // The window is Edge started with --user-data-dir=<DataDir>\window, so every process belonging to it has that folder in its
 // command line. This is more reliable than watching the process we launched, which may exit right away (hand-off).
 using System;
@@ -69,6 +69,9 @@ namespace GameNetKit
             try
             {
                 var pids = new HashSet<uint>(WindowProcessIds().Select(i => (uint)i));
+                // the app's own window belongs to the running GameNetKit process itself
+                int me = Process.GetCurrentProcess().Id;
+                foreach (var p in Process.GetProcessesByName("GameNetKit")) { if (p.Id != me) pids.Add((uint)p.Id); p.Dispose(); }
                 if (pids.Count == 0) return false;
                 IntPtr found = IntPtr.Zero;
                 EnumWindows((h, l) =>
