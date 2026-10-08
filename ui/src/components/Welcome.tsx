@@ -53,7 +53,7 @@ export function Welcome({ t, rtl, onDone }: Props) {
       art: (
         <div className="flex w-full flex-col gap-7">
           <LinkStrip avg={26} jitter={0.4} loss={0} verdict="good" youLabel={t("you")} server={<Flag country="Qatar" cc="QA" />} serverNote={t("welcomeCity1")} />
-          <LinkStrip avg={115} jitter={13} loss={4} verdict="bad" youLabel={t("you")} server={<Flag country="Israel" cc="IL" />} serverNote={t("welcomeCity2")} />
+          <LinkStrip avg={115} jitter={13} loss={4} verdict="bad" youLabel={t("you")} server={<Flag country="Palestine" cc="PS" />} serverNote={t("welcomeCity2")} />
         </div>
       ),
     },

@@ -17,9 +17,11 @@ namespace GameNetKit
         static Func<bool> guardOn;
         static string guardOnText = "Guard: running", guardOffText = "Guard: stopped";
 
-        public static void Start(string exePath, Action open, Action exit, Func<bool> isGuardOn)
+        static Action onReady;                     // runs on the tray thread once the icon and the overlay exist (restores the saved overlay shortcut)
+
+        public static void Start(string exePath, Action open, Action exit, Func<bool> isGuardOn, Action ready = null)
         {
-            onOpen = open; onExit = exit; guardOn = isGuardOn;
+            onOpen = open; onExit = exit; guardOn = isGuardOn; onReady = ready;
             var t = new Thread(() =>
             {
                 try
@@ -38,6 +40,8 @@ namespace GameNetKit
                     icon.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) Safe(onOpen); };
                     icon.BalloonTipClicked += (s, e) => Safe(onOpen);
                     invoker = new Control(); invoker.CreateControl(); var h = invoker.Handle;
+                    OverlayLive.Attach();
+                    if (onReady != null) { try { onReady(); } catch (Exception e) { Program.Log("tray ready: " + e.Message); } }
                     Application.Run();
                 }
                 catch (Exception e) { Program.Log("tray: " + e.Message); }
@@ -71,9 +75,21 @@ namespace GameNetKit
             if (sound) { try { SystemSounds.Asterisk.Play(); } catch { } }
         }
 
+        /// <summary>runs something on the tray thread and waits for its answer (the overlay and its shortcut live there)</summary>
+        public static bool Available { get { return invoker != null && invoker.IsHandleCreated; } }
+
+        public static string Invoke(Func<string> f)
+        {
+            if (!Available) return "unavailable";
+            string r = "timeout";
+            var done = new ManualResetEvent(false);
+            Run(() => { try { r = f(); } catch (Exception e) { r = "error: " + e.Message; } finally { done.Set(); } });
+            return done.WaitOne(3000) ? r : "timeout";
+        }
+
         public static void Stop()
         {
-            try { Run(() => { if (icon != null) { icon.Visible = false; icon.Dispose(); icon = null; } Application.ExitThread(); }); Thread.Sleep(150); } catch { }
+            try { Run(() => { OverlayLive.Detach(); if (icon != null) { icon.Visible = false; icon.Dispose(); icon = null; } Application.ExitThread(); }); Thread.Sleep(150); } catch { }
         }
     }
 }

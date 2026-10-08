@@ -7,6 +7,7 @@ import type { Key } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { OverlaySettings } from "@/components/OverlaySettings";
 
 type T = (k: Key) => string;
 
@@ -26,10 +27,12 @@ interface Props {
   onDiagnostics: () => Promise<string>;
   /** show the welcome scenes again */
   onWelcome: () => void;
+  /** the in-game panel's choices; resolves to "" when done, otherwise the reason */
+  onOverlay: (patch: Partial<Pick<Settings, "overlayKey" | "overlayCorner" | "overlayVisible">>) => Promise<string>;
 }
 
 /** Start-up choices, kept in one small panel in the header so they are one click away but never in the way. */
-export function SettingsPopover({ t, settings, busyKey, onChange, sync, onSyncToggle, onChangeCode, density, onDensity, onDiagnostics, onWelcome }: Props) {
+export function SettingsPopover({ t, settings, busyKey, onChange, sync, onSyncToggle, onChangeCode, density, onDensity, onDiagnostics, onWelcome, onOverlay }: Props) {
   const [open, setOpen] = useState(false);
   const [diag, setDiag] = useState<"idle" | "busy" | "done" | "fail">("idle");
   const copyDiag = async () => {
@@ -141,6 +144,7 @@ export function SettingsPopover({ t, settings, busyKey, onChange, sync, onSyncTo
                 );
               })}
             </ul>
+            <OverlaySettings t={t} settings={settings} onChange={onOverlay} />
             <div className="flex items-start gap-3 border-t border-border p-3">
               <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Minimize2 className="size-4" /></span>
               <div className="min-w-0 flex-1">

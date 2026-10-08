@@ -1,4 +1,4 @@
-// "Start with Windows": a scheduled task that runs the guard silently with administrator rights, started at sign-in through an entry in
+﻿// "Start with Windows": a scheduled task that runs the guard silently with administrator rights, started at sign-in through an entry in
 // Task Manager > Startup apps (StartupEntry) and on demand by the window.
 //
 //   GameNetKit.exe --install-guard 1 --user DOMAIN\name     (elevated, one UAC prompt)  copy + task + start
@@ -19,6 +19,74 @@ namespace GameNetKit
     public static class GuardInstall
     {
         public const string TaskName = "GameNetKit Guard";
+        // The scan task: the scan needs administrator rights (packet capture), and this lets the window ask for it WITHOUT a prompt each time.
+        // Approval is given once, when the task is created. The window writes the scan's settings to scan-args.txt and asks the task to run.
+        public const string ScanTaskName = "GameNetKit Scan";
+        public static string ScanArgsPath { get { return Path.Combine(Program.DataDir, "scan-args.txt"); } }
+
+        public static bool ScanTaskExists()
+        {
+            string o;
+            return ProcUtil.Run("schtasks.exe", "/Query /TN \"" + ScanTaskName + "\"", 10000, out o) == 0;
+        }
+
+        // the copy the task runs must be the same program as this one (after an update it is the old one until the permission is given again)
+        public static bool ScanReady()
+        {
+            try
+            {
+                if (!ScanTaskExists() || !File.Exists(InstalledExe)) return false;
+                return new FileInfo(InstalledExe).Length == new FileInfo(Process.GetCurrentProcess().MainModule.FileName).Length;
+            }
+            catch { return false; }
+        }
+
+        public static bool RunScanTask()
+        {
+            string o;
+            int rc = ProcUtil.Run("schtasks.exe", "/Run /TN \"" + ScanTaskName + "\"", 15000, out o);
+            Program.Log("schtasks /Run scan rc=" + rc + " " + (o ?? "").Trim().Replace("\r", " ").Replace("\n", " "));
+            return rc == 0;
+        }
+
+        static int RegisterScanTask(string user)
+        {
+            string o;
+            string script =
+                "$a = New-ScheduledTaskAction -Execute '" + Q(InstalledExe) + "' -Argument '--scan-task 1'; " +
+                "$p = New-ScheduledTaskPrincipal -UserId '" + Q(user) + "' -LogonType Interactive -RunLevel Highest; " +
+                "$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::FromHours(1)); " +
+                "Register-ScheduledTask -TaskName '" + ScanTaskName + "' -Action $a -Principal $p -Settings $s -Description 'GameNetKit scan: runs a scan with administrator rights when the window asks' -Force -ErrorAction Stop | Out-Null";
+            int rc = Ps(script, out o);
+            Log("register scan rc=" + rc + " " + (o ?? "").Trim().Replace("\r", " ").Replace("\n", " "));
+            return rc;
+        }
+
+        // Elevated entry point (one prompt): copy + the scan task only (the guard is not touched)
+        public static int InstallScan(Dictionary<string, string> a)
+        {
+            try
+            {
+                string user = a.ContainsKey("user") ? a["user"] : "";
+                if (user == "" || user.IndexOfAny(new[] { '"', '\r', '\n' }) >= 0) { Log("bad user"); return 2; }
+                string src = Process.GetCurrentProcess().MainModule.FileName;
+                Directory.CreateDirectory(InstallDir);
+                if (!string.Equals(Path.GetFullPath(src), Path.GetFullPath(InstalledExe), StringComparison.OrdinalIgnoreCase))
+                {
+                    try { File.Copy(src, InstalledExe, true); } catch (IOException) { if (!File.Exists(InstalledExe)) throw; }   // in use by a running guard: keep that copy
+                }
+                return RegisterScanTask(user);
+            }
+            catch (Exception e) { Log("install scan failed: " + e.Message); return 3; }
+        }
+
+        public static int UninstallScan()
+        {
+            string o;
+            int rc = Ps("Unregister-ScheduledTask -TaskName '" + ScanTaskName + "' -Confirm:$false -ErrorAction SilentlyContinue", out o);
+            Log("unregister scan rc=" + rc);
+            return 0;
+        }
 
         public static string InstallDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "GameNetKit"); } }
         // the guard has its own file name, so Task Manager shows "GameNetKit-Guard.exe" next to "GameNetKit.exe" (the window part)
@@ -106,6 +174,7 @@ namespace GameNetKit
                 if (rc != 0) return rc;
                 try { File.Delete(Guard.StopPath); } catch { }
                 Ps("Start-ScheduledTask -TaskName '" + TaskName + "'", out o);
+                RegisterScanTask(user);
                 return 0;
             }
             catch (Exception e) { Log("install failed: " + e.Message); return 3; }
@@ -117,6 +186,7 @@ namespace GameNetKit
             {
                 string o;
                 StopRunningGuard();
+                Ps("Unregister-ScheduledTask -TaskName '" + ScanTaskName + "' -Confirm:$false -ErrorAction SilentlyContinue", out o);
                 int rc = Ps("Unregister-ScheduledTask -TaskName '" + TaskName + "' -Confirm:$false -ErrorAction SilentlyContinue", out o);
                 Log("unregister rc=" + rc + " " + (o ?? "").Trim());
                 try { if (Directory.Exists(InstallDir)) Directory.Delete(InstallDir, true); } catch (Exception e) { Log("could not delete " + InstallDir + ": " + e.Message); }

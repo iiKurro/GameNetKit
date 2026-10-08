@@ -379,6 +379,13 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lang, refreshSettings]);
 
+  // the in-game panel: shortcut, corner, shown or not (no spinner: each is one quick call)
+  const changeOverlay = useCallback(async (patch: Partial<Pick<Settings, "overlayKey" | "overlayCorner" | "overlayVisible">>) => {
+    const r = await api.settingsSet(patch).catch(() => null);
+    await refreshSettings();
+    return !r ? "error" : r.ok === false ? (r.error ?? "error") : "";
+  }, [refreshSettings]);
+
   // after an app update the installed copy of the guard is the old one until it is reinstalled
   const updateGuard = useCallback(async () => {
     setFwError("");
@@ -480,7 +487,7 @@ export default function App() {
 
   // the notification-area icon follows the language of the window
   useEffect(() => {
-    void api.trayLabels({ open: t("trayOpen"), guardOn: t("trayGuardOn"), guardOff: t("trayGuardOff"), exit: t("trayExit") }).catch(() => {});
+    void api.trayLabels({ open: t("trayOpen"), guardOn: t("trayGuardOn"), guardOff: t("trayGuardOff"), exit: t("trayExit"), ...Object.fromEntries((["ovPing", "ovJitter", "ovLoss", "ovNone", "ovHudHint", "ovMenuHint", "ovCmdScan", "ovCmdBlock", "ovCmdUnblock", "ovCmdUnblockAll", "ovDone", "ovBusy", "ovUac", "ovFail"] as const).map((k) => [k, t(k)])) }).catch(() => {});
   }, [t]);
 
   const tabs: { id: Tab; label: string; icon: typeof Radar; count?: number }[] = [
@@ -559,6 +566,7 @@ export default function App() {
                 onDensity={(d) => setDensity(d)}
                 onDiagnostics={copyDiagnostics}
                 onWelcome={() => setWelcome(true)}
+                onOverlay={changeOverlay}
               />
             )}
           </div>

@@ -1,4 +1,4 @@
-// Elevated worker: waits for the game, captures UDP headers with pktmon, measures servers, writes state.json.
+﻿// Elevated worker: waits for the game, captures UDP headers with pktmon, measures servers, writes state.json.
 // Runs as a separate (admin) process so the UI itself never needs elevation.
 using System;
 using System.Collections.Generic;
@@ -25,6 +25,10 @@ namespace GameNetKit
             public string Code;
             public Fail(string code, string msg) : base(msg) { Code = code; }
         }
+
+        // the location lookup's own naming is replaced: the place is shown as Palestine, with its flag
+        static string Palestine(string v) { return v == "IL" ? "PS" : v; }
+        static string CountryName(string name, string cc) { return cc == "IL" || cc == "PS" ? "Palestine" : name; }
 
         static void Put(string phase)
         {
@@ -226,8 +230,8 @@ namespace GameNetKit
                 var row = new Dictionary<string, object>
                 {
                     { "ip", s.Ip }, { "port", s.Port }, { "packets", s.Packets }, { "kb", (long)Math.Round(s.Bytes / 1024.0) },
-                    { "country", g != null ? (string)g["country"] : "?" },
-                    { "cc", g != null && g.ContainsKey("countryCode") ? (string)g["countryCode"] : "" },
+                    { "country", g != null ? CountryName((string)g["country"], g.ContainsKey("countryCode") ? (string)g["countryCode"] : "") : "?" },
+                    { "cc", g != null && g.ContainsKey("countryCode") ? Palestine((string)g["countryCode"]) : "" },
                     { "city", g != null ? (string)g["city"] : "?" },
                     { "provider", g != null ? (string)g["isp"] : "?" },
                     { "host", Analyzer.Ptr(s.Ip) },

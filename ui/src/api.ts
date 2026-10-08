@@ -111,6 +111,10 @@ export interface Settings {
   taskInstalled: boolean;
   /** the Startup apps entry was switched off by the user in Task Manager */
   startupDisabled?: boolean;
+  /** the in-game panel: its shortcut, its corner (tl / tr / bl / br) and whether it is showing */
+  overlayKey: string;
+  overlayCorner: "tl" | "tr" | "bl" | "br";
+  overlayVisible: boolean;
 }
 
 /** automatic sharing with the group server */
@@ -232,7 +236,7 @@ export const api = {
   processes: () => call<ProcessRow[]>("/api/processes"),
   addProcess: (game: string, process: string) => call<{ ok: boolean; error?: string }>("/api/games/process", { game, process }),
   notify: (title: string, text: string) => call<{ ok: boolean }>("/api/notify", { title, text }),
-  trayLabels: (l: { open: string; guardOn: string; guardOff: string; exit: string }) => call<{ ok: boolean }>("/api/tray/labels", l),
+  trayLabels: (l: { open: string; guardOn: string; guardOff: string; exit: string } & Record<string, string>) => call<{ ok: boolean }>("/api/tray/labels", l),
   diagnostics: () => call<{ ok: boolean; text: string }>("/api/diagnostics"),
   syncNow: () => call<{ ok: boolean }>("/api/sync/now", {}),
   /** group admin (hidden, Ctrl+Shift+A): only works with the admin code */
@@ -244,7 +248,7 @@ export const api = {
   adminDelete: (player: string, game = "", run = "") => call<{ ok: boolean; removed?: number; error?: string }>("/api/admin/delete", { player, game, run }),
   guardUpdate: () => call<{ ok: boolean; error?: string; detail?: string }>("/api/guard/update", {}),
   settings: () => call<Settings>("/api/settings"),
-  settingsSet: (patch: Partial<Pick<Settings, "guardAuto" | "background" | "startup" | "notify" | "sound">>) =>
+  settingsSet: (patch: Partial<Pick<Settings, "guardAuto" | "background" | "startup" | "notify" | "sound" | "overlayKey" | "overlayCorner" | "overlayVisible">>) =>
     call<Settings & { ok?: boolean; error?: string; detail?: string }>("/api/settings/set", patch),
   unblock: (ip: string) => call<{ ok: boolean; error?: string; detail?: string }>("/api/unblock", { ip }),
   // history is always per game: scans of different games are never mixed

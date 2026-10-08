@@ -1,0 +1,41 @@
+name: Build check
+
+# Every push and pull request: the UI types are checked and the exe is built. Nothing is published here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install the UI packages (exactly as locked)
+        working-directory: ui
+        run: npm ci --no-audit --no-fund
+
+      - name: Check the UI types
+        working-directory: ui
+        run: npx tsc --noEmit
+
+      - name: Build GameNetKit.exe
+        shell: pwsh
+        run: ./build.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GameNetKit
+          path: dist/GameNetKit.exe
+          retention-days: 7

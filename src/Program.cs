@@ -1,4 +1,4 @@
-// GameNetKit - UI host. Serves the embedded web UI on 127.0.0.1 and opens it in an app-style window (Edge).
+﻿// GameNetKit - UI host. Serves the embedded web UI on 127.0.0.1 and opens it in an app-style window (Edge).
 // Everything that needs admin runs in a separate worker process started on demand (UAC prompt). C# 5 / .NET Framework 4.
 using System;
 using System.Collections.Generic;
@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "1.2.2";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "1.3.1";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -59,13 +59,52 @@ namespace GameNetKit
             // started by the "GameNetKit" Startup apps entry: ask the scheduled task to start the guard, then leave (no window, no admin prompt)
             if (args.ContainsKey("start-guard")) { GuardInstall.RunTask(); return 0; }
             if (args.ContainsKey("regiontest")) return RegionTest(args["regiontest"]);
-            if (args.ContainsKey("worker")) return Worker.Run(args);
+            if (args.ContainsKey("worker"))
+            {
+                // the first scan (the one Windows asked admin approval for) also sets up the scan task, so no later scan asks again
+                if (args.ContainsKey("user") && !args.ContainsKey("demo"))
+                    new System.Threading.Thread(() => { try { if (!GuardInstall.ScanReady()) GuardInstall.InstallScan(args); } catch (Exception e) { Log("scan task setup: " + e.Message); } }) { IsBackground = true }.Start();
+                return Worker.Run(args);
+            }
             if (args.ContainsKey("fw")) return Firewall.Run(args);
             if (args.ContainsKey("guard")) return Guard.Run();
+            if (args.ContainsKey("scan-task")) return ScanTask();
+            if (args.ContainsKey("install-scan")) return GuardInstall.InstallScan(args);
+            if (args.ContainsKey("uninstall-scan")) return GuardInstall.UninstallScan();
             if (args.ContainsKey("install-guard")) return GuardInstall.Install(args);
             if (args.ContainsKey("uninstall-guard")) return GuardInstall.Uninstall();
             if (args.ContainsKey("selftest")) return SelfTest();
             return new UiHost(args).Run();
+        }
+
+        // started by the "GameNetKit Scan" task (administrator, no prompt): runs the scan the window just asked for
+        static int ScanTask()
+        {
+            try
+            {
+                string p = GuardInstall.ScanArgsPath;
+                if (!File.Exists(p) || (DateTime.Now - File.GetLastWriteTime(p)).TotalSeconds > 120) { Log("scan task: no fresh request"); return 2; }
+                string line = File.ReadAllText(p);
+                try { File.Delete(p); } catch { }
+                var a = ParseArgs(SplitArgs(line));
+                if (!a.ContainsKey("worker")) return 2;
+                return Worker.Run(a);
+            }
+            catch (Exception e) { Log("scan task: " + e.Message); return 3; }
+        }
+
+        // a command line as text -> its words (double quotes keep spaces together)
+        static string[] SplitArgs(string s)
+        {
+            var list = new List<string>(); var sb = new StringBuilder(); bool q = false, any = false;
+            foreach (char ch in s)
+            {
+                if (ch == '"') { q = !q; any = true; }
+                else if (char.IsWhiteSpace(ch) && !q) { if (any || sb.Length > 0) { list.Add(sb.ToString()); sb.Clear(); any = false; } }
+                else sb.Append(ch);
+            }
+            if (any || sb.Length > 0) list.Add(sb.ToString());
+            return list.ToArray();
         }
 
         static readonly object logLock = new object();
@@ -227,7 +266,7 @@ namespace GameNetKit
                 // windows left over from an earlier run still point at a dead server (that is the "frozen window"): close them first
                 bool useWindow = !args.ContainsKey("nowindow");
                 if (useWindow) KillStaleWindows();
-                if (useWindow) Tray.Start(exePath, TrayOpen, TrayExit, GuardRunning);
+                if (useWindow) Tray.Start(exePath, TrayOpen, TrayExit, GuardRunning, ApplyOverlaySettings);
                 Process browser = useWindow ? OpenWindow("http://127.0.0.1:" + port + "/?t=" + token) : null;
                 browserProc = browser;
                 DateTime started = DateTime.Now;
@@ -538,12 +577,18 @@ namespace GameNetKit
 
             string a = "--worker 1 --dir \"" + Program.DataDir + "\" --game \"" + gameName + "\" --process \"" + g["process"] + "\"" +
                        " --seconds " + Cfg("captureSeconds", 240) + " --top " + Cfg("topServers", 8) + " --pings " + Cfg("pingCount", 10) +
-                       (demo ? " --demo 1" : "");
+                       (demo ? " --demo 1" : " --user \"" + Environment.UserDomainName + "\\" + Environment.UserName + "\"");
 
             ThreadPool.QueueUserWorkItem(delegate
             {
                 try
                 {
+                    // the permission was given once (the scan task): no Windows prompt
+                    if (!demo && GuardInstall.ScanReady())
+                    {
+                        File.WriteAllText(GuardInstall.ScanArgsPath, a, new UTF8Encoding(false));
+                        if (GuardInstall.RunScanTask()) return;
+                    }
                     var psi = new ProcessStartInfo(exePath, a) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(exePath) };
                     if (!demo) psi.Verb = "runas";
                     worker = Process.Start(psi);

@@ -1,0 +1,65 @@
+name: Release
+
+# Publishing a version = pushing a tag:   git tag v1.3.2   then   git push origin v1.3.2
+# The runner builds GameNetKit.exe from the code in that tag, checks it, and publishes the release with the notes in RELEASE_NOTES.md.
+# A tag with a dash (v1.3.2-test) is published as a pre-release, which the app's update check ignores.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag must match the version inside the program
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $want = ($env:TAG -replace '^v', '') -replace '-.*$', ''
+          $line = Select-String -Path src/Program.cs -Pattern 'public static string Version = "([^"]+)"' | Select-Object -First 1
+          $have = $line.Matches[0].Groups[1].Value
+          Write-Host "tag $env:TAG -> $want, Program.cs has $have"
+          if ($want -ne $have) { throw "Tag $env:TAG does not match Version = `"$have`" in src/Program.cs. Change one of them." }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install the UI packages (exactly as locked)
+        working-directory: ui
+        run: npm ci --no-audit --no-fund
+
+      - name: Check the UI types
+        working-directory: ui
+        run: npx tsc --noEmit
+
+      - name: Build GameNetKit.exe
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Check the exe exists and is not tiny
+        shell: pwsh
+        run: |
+          $f = Get-Item dist/GameNetKit.exe
+          Write-Host ("{0} bytes" -f $f.Length)
+          if ($f.Length -lt 500000) { throw "GameNetKit.exe is suspiciously small" }
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $flags = @()
+          if ($env:TAG -match '-') { $flags += '--prerelease' } else { $flags += '--latest' }
+          gh release create $env:TAG dist/GameNetKit.exe --title "GameNetKit $env:TAG" --notes-file RELEASE_NOTES.md @flags
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }

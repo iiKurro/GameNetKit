@@ -1,4 +1,4 @@
-// UiHost part 7: notifications, the "copy diagnostics" text, and what the notification-area icon can ask the window to do.
+﻿// UiHost part 7: notifications, the "copy diagnostics" text, and what the notification-area icon can ask the window to do.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -33,6 +33,7 @@ namespace GameNetKit
         {
             Func<string, string> g = k => body.ContainsKey(k) ? Convert.ToString(body[k]) : "";
             Tray.SetLabels(g("open"), g("guardOn"), g("guardOff"), g("exit"));
+            foreach (var k in body.Keys.ToList()) if (k.StartsWith("ov")) OverlayLive.SetLabel(k, g(k));
             return Ok();
         }
 

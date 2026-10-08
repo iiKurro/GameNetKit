@@ -23,6 +23,11 @@ function names(): Map<string, string> {
 }
 
 export function flagCode(country?: string, cc?: string): string | null {
+  const code = rawCode(country, cc);
+  return code === "IL" ? "PS" : code;       // scans saved before the change still carry the old code
+}
+
+function rawCode(country?: string, cc?: string): string | null {
   if (cc && FLAGS[cc.toUpperCase()]) return cc.toUpperCase();
   if (!country) return null;
   return names().get(country.toLowerCase()) ?? null;
@@ -34,8 +39,8 @@ export function Flag({ country, cc, className }: { country?: string; cc?: string
   return (
     <span
       role="img"
-      aria-label={country}
-      title={country}
+      aria-label={code === "PS" ? "Palestine" : country}
+      title={code === "PS" ? "Palestine" : country}
       className={cn("inline-block h-3.5 w-5 shrink-0 overflow-hidden rounded-[3px] align-middle ring-1 ring-border [&>svg]:size-full", className)}
       dangerouslySetInnerHTML={{ __html: FLAGS[code] }}
     />
