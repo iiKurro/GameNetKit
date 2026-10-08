@@ -15,7 +15,7 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: The tag must match the version inside the program
         shell: pwsh
@@ -28,7 +28,7 @@ jobs:
           Write-Host "tag $env:TAG -> $want, Program.cs has $have"
           if ($want -ne $have) { throw "Tag $env:TAG does not match Version = `"$have`" in src/Program.cs. Change one of them." }
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
