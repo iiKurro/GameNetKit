@@ -1,4 +1,4 @@
-// Packet-capture parsing, ping measurement, geo lookup. Pure logic, no UI. (C# 5 / .NET Framework 4)
+﻿// Packet-capture parsing, ping measurement, geo lookup. Pure logic, no UI. (C# 5 / .NET Framework 4)
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -316,7 +316,7 @@ namespace GameNetKit
             try
             {
                 var js = new JavaScriptSerializer();
-                var body = ips.Select(ip => new Dictionary<string, object> { { "query", ip }, { "fields", "status,country,countryCode,city,isp,query" } }).ToList();
+                var body = ips.Select(ip => new Dictionary<string, object> { { "query", ip }, { "fields", "status,country,countryCode,city,isp,lat,lon,query" } }).ToList();
                 var req = (HttpWebRequest)WebRequest.Create("http://ip-api.com/batch");
                 req.Method = "POST";
                 req.ContentType = "application/json";
@@ -344,7 +344,7 @@ namespace GameNetKit
         {
             try
             {
-                var req = (HttpWebRequest)WebRequest.Create("http://ip-api.com/json/?fields=status,isp,country");
+                var req = (HttpWebRequest)WebRequest.Create("http://ip-api.com/json/?fields=status,isp,country,lat,lon");
                 req.Timeout = 8000;
                 using (var resp = (HttpWebResponse)req.GetResponse())
                 using (var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
@@ -353,7 +353,10 @@ namespace GameNetKit
                     if (Convert.ToString(d["status"]) != "success") return null;
                     string isp = Convert.ToString(d["isp"]), country = Convert.ToString(d["country"]);
                     if (isp.Length > 60) isp = isp.Substring(0, 60);
-                    return new Dictionary<string, object> { { "isp", isp }, { "country", country } };
+                    var own = new Dictionary<string, object> { { "isp", isp }, { "country", country } };
+                    // roughly where this line is (rounded to about 10 km); it stays in the scan files on this PC and is never shared
+                    if (d.ContainsKey("lat") && d.ContainsKey("lon")) { own["lat"] = Math.Round(Convert.ToDouble(d["lat"]), 1); own["lon"] = Math.Round(Convert.ToDouble(d["lon"]), 1); }
+                    return own;
                 }
             }
             catch { return null; }

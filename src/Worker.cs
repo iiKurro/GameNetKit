@@ -236,7 +236,10 @@ namespace GameNetKit
                     { "provider", g != null ? (string)g["isp"] : "?" },
                     { "host", Analyzer.Ptr(s.Ip) },
                     { "avg", ps.Avg }, { "max", ps.Max }, { "jitter", ps.Jitter }, { "loss", ps.Loss },
-                    { "verdict", Analyzer.Verdict(ps) }, { "via", via }
+                    { "verdict", Analyzer.Verdict(ps) }, { "via", via },
+                    // where the server is (a point in its city): the globe pins it exactly
+                    { "lat", g != null && g.ContainsKey("lat") ? (object)Math.Round(Convert.ToDouble(g["lat"]), 2) : null },
+                    { "lon", g != null && g.ContainsKey("lon") ? (object)Math.Round(Convert.ToDouble(g["lon"]), 2) : null }
                 };
                 lock (rows) rows[s.Ip] = row;
             })).ToArray();
@@ -306,22 +309,22 @@ namespace GameNetKit
             Put("measuring"); Thread.Sleep(1200);
             results = new List<Dictionary<string, object>>
             {
-                Demo("203.0.113.10", 7777, "Bahrain", "BH", "Manama", "Amazon", 8421, 612, 31, 3, 0, "good"),
-                Demo("203.0.113.55", 7778, "Germany", "DE", "Frankfurt", "Amazon", 1204, 98, 142, 33, 4, "bad"),
-                Demo("198.51.100.7", 7777, "India", "IN", "Mumbai", "Amazon", 640, 52, 87, 12, 0, "ok"),
-                Demo("198.51.100.90", 443, "United States", "US", "Ashburn", "Epic Games", 120, 9, null, null, 100, "noreply")
+                Demo("203.0.113.10", 7777, "Bahrain", "BH", "Manama", "Amazon", 8421, 612, 31, 3, 0, "good", 26.23, 50.58),
+                Demo("203.0.113.55", 7778, "Germany", "DE", "Frankfurt", "Amazon", 1204, 98, 142, 33, 4, "bad", 50.11, 8.68),
+                Demo("198.51.100.7", 7777, "India", "IN", "Mumbai", "Amazon", 640, 52, 87, 12, 0, "ok", 19.08, 72.88),
+                Demo("198.51.100.90", 443, "United States", "US", "Ashburn", "Epic Games", 120, 9, null, null, 100, "noreply", 39.04, -77.49)
             };
-            ownNet = new Dictionary<string, object> { { "isp", "Demo Telecom" }, { "country", "Saudi Arabia" } };
+            ownNet = new Dictionary<string, object> { { "isp", "Demo Telecom" }, { "country", "Saudi Arabia" }, { "lat", 24.7 }, { "lon", 46.7 } };
             WriteCsv();
             Put("done");
         }
 
-        static Dictionary<string, object> Demo(string ip, int port, string country, string cc, string city, string isp, long pk, long kb, int? avg, double? jit, int loss, string verdict)
+        static Dictionary<string, object> Demo(string ip, int port, string country, string cc, string city, string isp, long pk, long kb, int? avg, double? jit, int loss, string verdict, double lat, double lon)
         {
             return new Dictionary<string, object>
             {
                 { "ip", ip }, { "port", port }, { "country", country }, { "cc", cc }, { "city", city }, { "provider", isp }, { "host", "" },
-                { "packets", pk }, { "kb", kb }, { "avg", avg }, { "max", avg == null ? (int?)null : avg + 9 }, { "jitter", jit }, { "loss", loss }, { "verdict", verdict }
+                { "packets", pk }, { "kb", kb }, { "avg", avg }, { "max", avg == null ? (int?)null : avg + 9 }, { "jitter", jit }, { "loss", loss }, { "verdict", verdict }, { "lat", lat }, { "lon", lon }
             };
         }
     }

@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "1.4.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "1.5.0";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -430,6 +430,12 @@ namespace GameNetKit
                     Send(ctx, 200, "text/html; charset=utf-8", page);
                     return;
                 }
+                if (path.StartsWith("/art/"))
+                {
+                    if (ctx.Request.QueryString["t"] != token) { Send(ctx, 403, "text/plain", "forbidden"); return; }
+                    SendArt(ctx, path);
+                    return;
+                }
                 if (path == "/promo.mp4")
                 {
                     if (ctx.Request.QueryString["t"] != token) { Send(ctx, 403, "text/plain", "forbidden"); return; }
@@ -585,7 +591,9 @@ namespace GameNetKit
 
         Dictionary<string, object> Info()
         {
-            return new Dictionary<string, object> { { "version", Program.Version }, { "repo", Program.Repo }, { "games", Games() }, { "dataDir", Program.DataDir } };
+            var games = Games();
+            foreach (var gm in games) gm["slug"] = Program.Slug(Convert.ToString(gm["name"]));      // the picture of a game is asked for by this name
+            return new Dictionary<string, object> { { "version", Program.Version }, { "repo", Program.Repo }, { "games", games }, { "dataDir", Program.DataDir } };
         }
 
         // ------------------------------------------------------------------ run control

@@ -1,4 +1,4 @@
-// The guard: an elevated background process (started once, one UAC prompt) that applies a game's blocks while that game
+﻿// The guard: an elevated background process (started once, one UAC prompt) that applies a game's blocks while that game
 // is running and removes them when it is closed. Blocks marked "always" are not its business.
 //   GameNetKit.exe --guard            started by the UI; stops when guard-stop.flag appears (or on reboot / logoff)
 // State is exchanged through files in the data folder: blocks.json (read), guard.json (written every 2 s by its own thread, so a slow
@@ -23,7 +23,29 @@ namespace GameNetKit
         {
             var list = LoadBase(exeDir, js, forGuard);
             ApplyOverrides(list, js);
+            AddArtSources(list);
             return list;
+        }
+
+        // Where the pictures of the known games come from (their store pages). Built in, so they are found also when the program runs alone
+        // (no games.json beside it); a games.json that names its own "steam" / "epic" wins.
+        static readonly Dictionary<string, KeyValuePair<string, object>> ArtSources = new Dictionary<string, KeyValuePair<string, object>>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "Rocket League", new KeyValuePair<string, object>("steam", 252950L) },
+            { "Overwatch 2", new KeyValuePair<string, object>("steam", 2357570L) },
+            { "Modern Warfare 3", new KeyValuePair<string, object>("steam", 3595270L) },
+            { "Modern Warfare 4", new KeyValuePair<string, object>("steam", 4435490L) },
+            { "Fortnite", new KeyValuePair<string, object>("epic", "fortnite") },
+            { "ARC Raiders", new KeyValuePair<string, object>("steam", 1808500L) }
+        };
+
+        static void AddArtSources(List<Dictionary<string, object>> list)
+        {
+            foreach (var g in list)
+            {
+                KeyValuePair<string, object> a;
+                if (!g.ContainsKey("steam") && !g.ContainsKey("epic") && ArtSources.TryGetValue(Convert.ToString(g["name"]), out a)) g[a.Key] = a.Value;
+            }
         }
 
         // processes the player picked for a game ("this is my game") are added to what the list says; both the window and the guard read them

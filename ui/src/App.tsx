@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Ban, Copy, Download, FolderOpen, Gamepad2, History as HistoryIcon, Lightbulb, LockKeyhole, Moon, Play, Radar, RefreshCw, Settings2, ShieldCheck, Square, Sun, UserRound, X } from "lucide-react";
+import { Search, Activity, Ban, Copy, Download, FolderOpen, Gamepad2, History as HistoryIcon, Lightbulb, LockKeyhole, Moon, Play, Radar, RefreshCw, Settings2, ShieldCheck, Square, Sun, UserRound, X } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { ProfileDialog } from "@/components/ProfileDialog";
 import { AdminPanel } from "@/components/AdminPanel";
 import { motion } from "motion/react";
-import { AnimatedTabs } from "@/components/ui/animated-tabs";
+import { NavDock, ScanArt, HistoryArt, InsightsArt, BlockedArt, type DockItem } from "@/components/NavDock";
+import { GameCarousel } from "@/components/GameCarousel";
+import { Tilt } from "@/components/ui/tilt";
+import type { GlobePoint, GlobeTone } from "@/components/Globe";
+import { ScanGlobe, type ScanTarget } from "@/components/ScanGlobe";
+import { GameBanner } from "@/components/GameBanner";
+import { CommandPalette, type Command } from "@/components/CommandPalette";
+import { codeOfName, countryName, guessHome, normalCode, placeOf } from "@/lib/geo";
 import { SettingsView } from "@/views/SettingsView";
 import { PromoPlayer } from "@/components/PromoPlayer";
 import { api, type BlockEntry, type GuardState, type Info, type Person, type Phase, type Profile, type RunSummary, type Settings, type SyncState, type ServerResult, type State, type UpdateInfo } from "@/api";
@@ -22,7 +29,7 @@ import { VerticalStepper } from "@/components/ui/stepper";
 import { ResultCard, locationOf, verdictLabel } from "@/components/ResultCard";
 import { Suggestions } from "@/components/Suggestions";
 import { InsightsView } from "@/views/Insights";
-import { buildInsight, rangeBlocked, type Source } from "@/lib/insights";
+import { aggregate, buildInsight, rangeBlocked, type Source } from "@/lib/insights";
 import { Skeleton } from "@/components/ui/skeleton";
 import { rangeStats, suggestions } from "@/lib/stats";
 import { HistoryView } from "@/views/History";
@@ -66,6 +73,13 @@ export default function App() {
   const [welcome, setWelcome] = useState(false);
   const [picker, setPicker] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [palette, setPalette] = useState(false);
+  // Ctrl+K opens the command palette from anywhere
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((o) => !o); } };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const say = useCallback((text: string) => {
     setNotice(text);
@@ -492,12 +506,75 @@ export default function App() {
     void api.trayLabels({ open: t("trayOpen"), guardOn: t("trayGuardOn"), guardOff: t("trayGuardOff"), exit: t("trayExit"), ...Object.fromEntries((["ovPing", "ovJitter", "ovLoss", "ovNone", "ovHudHint", "ovMenuHint", "ovCmdScan", "ovCmdBlock", "ovCmdUnblock", "ovCmdUnblockAll", "ovDone", "ovBusy", "ovUac", "ovFail"] as const).map((k) => [k, t(k)])) }).catch(() => {});
   }, [t]);
 
-  const tabs: { id: Tab; label: string; icon: typeof Radar; count?: number }[] = [
-    { id: "scan", label: t("tabScan"), icon: Radar },
-    { id: "history", label: t("tabHistory"), icon: HistoryIcon, count: historyCount },
-    { id: "insights", label: t("tabInsights"), icon: Lightbulb, count: suggestionCount },
-    { id: "blocked", label: t("tabBlocked"), icon: Ban, count: blocks.length },
+  const commands: Command[] = [
+    ...(running
+      ? [{ id: "cancel", group: t("cmdGroupActions"), label: t("cancel"), icon: <Square />, run: () => { void api.cancel().catch(() => setFwError(t("errGeneric"))); } }]
+      : game ? [{ id: "scan", group: t("cmdGroupActions"), label: `${t("start")} · ${game}`, icon: <Play />, run: () => { setSettingsOpen(false); setTab("scan"); void start(); } }] : []),
+    { id: "theme", group: t("cmdGroupActions"), label: theme === "dark" ? t("themeToLight") : t("themeToDark"), icon: theme === "dark" ? <Sun /> : <Moon />, run: () => setTheme(theme === "dark" ? "light" : "dark") },
+    { id: "settings", group: t("cmdGroupActions"), label: t("settingsTitle"), icon: <Settings2 />, run: () => setSettingsOpen(true) },
+    { id: "go-scan", group: t("cmdGroupGo"), label: t("tabScan"), icon: <Radar />, run: () => { setSettingsOpen(false); setTab("scan"); } },
+    { id: "go-history", group: t("cmdGroupGo"), label: t("tabHistory"), icon: <HistoryIcon />, hint: String(historyCount), run: () => { setSettingsOpen(false); setTab("history"); } },
+    { id: "go-insights", group: t("cmdGroupGo"), label: t("tabInsights"), icon: <Lightbulb />, run: () => { setSettingsOpen(false); setTab("insights"); } },
+    { id: "go-blocked", group: t("cmdGroupGo"), label: t("tabBlocked"), icon: <Ban />, hint: String(blocks.length), run: () => { setSettingsOpen(false); setTab("blocked"); } },
+    ...(running ? [] : (info?.games.filter((g) => g.enabled) ?? []).map((g) => ({
+      id: `game-${g.name}`, group: t("cmdGroupGames"), label: g.name, icon: <Gamepad2 />, hint: (counts[g.name] ?? 0) > 0 ? String(counts[g.name]) : undefined,
+      run: () => { setSettingsOpen(false); setTab("scan"); setGame(g.name); },
+    }))),
   ];
+
+  const dock: DockItem[] = [
+    { id: "scan", label: t("tabScan"), art: <ScanArt />, tint: "text-primary" },
+    { id: "history", label: t("tabHistory"), art: <HistoryArt />, tint: "text-info", count: historyCount },
+    { id: "insights", label: t("tabInsights"), art: <InsightsArt />, tint: "text-warning", count: suggestionCount },
+    { id: "blocked", label: t("tabBlocked"), art: <BlockedArt />, tint: "text-destructive", count: blocks.length, danger: true },
+  ];
+
+  // ---- the globe: where the player is, and the servers of the matches
+  const toneOf = (verdict: string, avg: number | null): GlobeTone => (avg == null ? "idle" : verdict === "bad" ? "bad" : verdict === "ok" ? "ok" : verdict === "good" ? "good" : "idle");
+  const homeCode = useMemo(() => {
+    const mine = sources ? Object.values(sources).flatMap((list) => list.find((s) => s.isMe)?.rows ?? []) : [];
+    const named = mine.find((r) => r.net?.country)?.net?.country;
+    return codeOfName(named) || codeOfName(scanRows[0]?.net?.country) || guessHome();
+  }, [sources, scanRows]);
+  const globeOrigin = homeCode ? { cc: homeCode, label: countryName(homeCode, lang) } : null;
+  // the scan globe: each server of the last match where it really is (a point in its city; the middle of the country for an old scan)
+  const scanTargets: ScanTarget[] = useMemo(() => state.results.flatMap((s) => {
+    const pl = placeOf({ lat: s.lat, lon: s.lon, cc: normalCode(s.cc || codeOfName(s.country)) });
+    return pl ? [{ id: s.ip, lat: pl[0], lon: pl[1], tone: toneOf(s.verdict, s.avg) }] : [];
+  }), [state.results]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const homePlace = useMemo(() => {
+    const n = scanNet ?? scanRows[0]?.net ?? null;
+    if (n && typeof n.lat === "number" && typeof n.lon === "number") return { lat: n.lat, lon: n.lon };
+    const c = placeOf({ cc: homeCode });
+    return c ? { lat: c[0], lon: c[1] } : null;
+  }, [scanNet, scanRows, homeCode]);
+  const slugOf = (name: string) => info?.games.find((g) => g.name === name)?.slug;
+  const scanPlaceText = (() => {
+    const b = state.results[0];
+    const pl = b ? placeOf({ lat: b.lat, lon: b.lon, cc: normalCode(b.cc || codeOfName(b.country)) }) : null;
+    return pl ? `${Math.abs(pl[0]).toFixed(2)}°${pl[0] >= 0 ? "N" : "S"} · ${Math.abs(pl[1]).toFixed(2)}°${pl[1] >= 0 ? "E" : "W"}` : "";
+  })();
+
+  // everybody's matches, one marker per country
+  const allPoints: GlobePoint[] = useMemo(() => {
+    if (!sources) return [];
+    const by = new Map<string, { n: number; bad: number; sum: number; counted: number }>();
+    for (const list of Object.values(sources)) {
+      for (const r of aggregate(list)) {
+        const cc = normalCode(r.sample.cc || codeOfName(r.sample.country));
+        if (!cc) continue;
+        const e = by.get(cc) ?? { n: 0, bad: 0, sum: 0, counted: 0 };
+        e.n += r.matches; e.bad += r.bad;
+        if (r.avg != null) { e.sum += r.avg * r.matches; e.counted += r.matches; }
+        by.set(cc, e);
+      }
+    }
+    return [...by.entries()].map(([cc, e]) => {
+      const avg = e.counted ? Math.round(e.sum / e.counted) : null;
+      const tone: GlobeTone = avg == null ? "idle" : e.bad / Math.max(1, e.n) >= 0.25 || avg >= 100 ? "bad" : avg >= 60 ? "ok" : "good";
+      return { id: cc, cc, label: countryName(cc, lang), tone, detail: avg != null ? `${avg} ms` : undefined };
+    });
+  }, [sources, lang]);
 
   useEffect(() => {
     if (profile && !profile.name && !firstRunSeen.current) { firstRunSeen.current = true; setFirstRun(true); setWelcome(true); }
@@ -505,7 +582,7 @@ export default function App() {
   // an account that shares with the group but has no password yet must choose one (it is how it is logged into from any PC)
   const needPassword = !!profile?.name && !!sync?.configured && !!sync.hasCode && !sync.hasPassword && !firstRun;
   needPasswordRef.current = needPassword;
-  const modalOpen = picker || welcome || firstRun || needPassword || dialog !== null || adminOpen;
+  const modalOpen = palette || picker || welcome || firstRun || needPassword || dialog !== null || adminOpen;
   const relogin = !!sync?.hasPassword && (sync.error === "player" || sync.error === "taken");
 
   // what the header chip says when sharing has a problem (the details are in Settings)
@@ -548,6 +625,9 @@ export default function App() {
             <Button variant="ghost" size="sm" className="size-8 px-0" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? t("themeToLight") : t("themeToDark")} title={theme === "dark" ? t("themeToLight") : t("themeToDark")}>
               {theme === "dark" ? <Sun /> : <Moon />}
             </Button>
+            <Button variant="ghost" size="sm" onClick={() => setPalette(true)} aria-label={t("cmdTitle")} title={t("cmdTitle")}>
+              <Search /> <kbd className="hide-compact rounded border border-border bg-muted px-1.5 py-px text-[10px] font-semibold text-muted-foreground" dir="ltr">Ctrl K</kbd>
+            </Button>
             {settings && (
               <Button variant={settingsOpen ? "secondary" : "ghost"} size="sm" aria-pressed={settingsOpen} onClick={() => setSettingsOpen((o) => !o)}>
                 <Settings2 /> {t("settingsTitle")}
@@ -584,17 +664,7 @@ export default function App() {
         )}
 
         {/* tabs (the settings page replaces them while it is open) */}
-        {!settingsOpen && (
-          <AnimatedTabs
-            tabs={tabs.map((x) => {
-              const Icon = x.icon;
-              return { id: x.id, label: x.label, icon: <Icon />, count: x.count, countTone: x.id === "blocked" ? ("danger" as const) : ("neutral" as const) };
-            })}
-            active={tab}
-            onChange={(id) => setTab(id as Tab)}
-            label="GameNetKit"
-          />
-        )}
+        {!settingsOpen && <NavDock items={dock} active={tab} onChange={(id) => setTab(id as Tab)} label="GameNetKit" />}
 
         {settings && guard.running && guard.version && info && guard.version !== info.version && settings.taskInstalled && (
           <div className="enter flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 p-4">
@@ -653,8 +723,9 @@ export default function App() {
         <motion.div
           key={tab}
           className="flex flex-1 flex-col gap-5"
-          initial={{ opacity: 0.2, y: 6 }}
-          animate={{ opacity: 1, y: 0, transition: { duration: 0.18, ease: [0.16, 1, 0.3, 1] } }}
+          style={{ transformOrigin: "50% 0%" }}
+          initial={{ opacity: 0.15, y: 12, rotateX: 5, transformPerspective: 1500 }}
+          animate={{ opacity: 1, y: 0, rotateX: 0, transition: { duration: 0.32, ease: [0.16, 1, 0.3, 1] } }}
         >
         {tab === "history" && (
           <HistoryView
@@ -679,6 +750,7 @@ export default function App() {
             failed={sourcesFail}
             onRetry={() => setSourcesTick((n) => n + 1)}
             peopleCount={people.length}
+            globe={{ origin: globeOrigin, points: allPoints }}
             sharing={!!sync?.configured}
             onBlock={(s, g, range) => block(s, g, range, true)}
           />
@@ -698,33 +770,25 @@ export default function App() {
           />}
 
         {tab === "scan" && (
+          <>
+          {/* the games, across the page, under the dock */}
+          {!info && <Skeleton className="h-[240px] w-full rounded-2xl" />}
+          {info && <p className="-mb-2 text-center text-xs text-muted-foreground">{t("pickYourGame")}</p>}
+          {info && (
+            <GameCarousel
+              games={info.games.filter((g) => g.enabled)}
+              value={game}
+              onChange={setGame}
+              disabled={running}
+              counts={counts}
+              rtl={lang === "ar"}
+              label={t("chooseGame")}
+              countText={(n) => `${n} ${t("tabHistory")}`}
+            />
+          )}
           <main className="grid flex-1 gap-5 lg:grid-cols-[330px_1fr] xl:grid-cols-[360px_1fr]">
             {/* control + stepper */}
             <section className="lift flex flex-col gap-5 self-start rounded-2xl border border-border bg-card p-5">
-              <div>
-                <div className="mb-2 text-xs font-medium text-muted-foreground">{t("chooseGame")}</div>
-                <div className="grid gap-2">
-                  {!info && (<><Skeleton className="h-11 w-full" /><Skeleton className="h-11 w-full" /></>)}
-                  {info?.games.filter((g) => g.enabled).map((g) => (
-                    <button
-                      key={g.name}
-                      disabled={running}
-                      onClick={() => setGame(g.name)}
-                      className={cn(
-                        "flex cursor-pointer items-center gap-3 rounded-lg border p-3 text-start transition-colors disabled:cursor-default disabled:opacity-60",
-                        game === g.name ? "border-primary/60 bg-primary/10" : "border-border hover:bg-accent",
-                      )}
-                    >
-                      <Gamepad2 className={cn("size-4", game === g.name ? "text-primary" : "text-muted-foreground")} />
-                      <span className="text-sm font-medium">{g.name}</span>
-                      {(counts[g.name] ?? 0) > 0 && (
-                        <span className="num ms-auto rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground" title={`${t("tabHistory")}: ${counts[g.name]}`}>{counts[g.name]}</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               <div className="flex flex-col gap-2">
                 {!running && (
                   <Button size="lg" onClick={start} disabled={!game || busy}>
@@ -759,6 +823,7 @@ export default function App() {
               )}
 
               <div className="hide-compact"><VerticalStepper steps={steps} current={stepCurrent} loading={running && p !== "ready"} done={p === "done"} /></div>
+              <div className="hide-compact"><PromoPlayer t={t} compact className="min-h-[150px]" /></div>
             </section>
 
             {/* the stage: the scope while a scan runs, the match server's wire and the other servers when it is done */}
@@ -772,8 +837,13 @@ export default function App() {
               )}
 
               {(p === "idle" || p === "error" || running) && (
-                <div className="enter lift rounded-2xl border border-border bg-card/70 px-4 py-2">
-                  <Scope phase={p === "error" ? "idle" : p} ports={state.ports} secondsLeft={state.secondsLeft} portsText={t("portsSeen")} title={scopeTitle} text={scopeText} game={running ? game : undefined} help={{ label: t("pickerOpen"), onClick: () => setPicker(true) }} />
+                <div className="enter lift overflow-hidden rounded-2xl border border-border bg-card/70">
+                  <Scope
+                    phase={p === "error" ? "idle" : p} ports={state.ports} secondsLeft={state.secondsLeft} portsText={t("portsSeen")} title={scopeTitle} text={scopeText}
+                    game={running ? game : undefined} help={{ label: t("pickerOpen"), onClick: () => setPicker(true) }}
+                    home={homePlace}
+                    banner={game ? <GameBanner name={game} slug={slugOf(game)} note={(counts[game] ?? 0) > 0 ? `${counts[game]} ${t("tabHistory")}` : undefined} /> : undefined}
+                  />
                 </div>
               )}
 
@@ -798,6 +868,21 @@ export default function App() {
                       </Button>
                     </div>
                   </div>
+                  {scanTargets.some((x) => x.id === best.ip) && (
+                    <div className="enter lift overflow-hidden rounded-2xl border border-border bg-card/70">
+                      <GameBanner name={state.game} slug={slugOf(state.game)} />
+                      <ScanGlobe mode="locked" targets={scanTargets} lockId={best.ip} home={homePlace} label={t("scanLocated")} className="relative -mt-14 h-[350px] w-full">
+                        {/* the card beside the point the globe locked on to: it appears when the frame has closed */}
+                        <div className="enter pointer-events-none absolute top-[calc(50%-92px)] flex max-w-[15rem] flex-col gap-1 rounded-xl border border-border bg-card/90 px-3.5 py-2.5 text-start shadow-lg backdrop-blur" style={{ left: "calc(50% + 62px)", animationDelay: "1.9s", animationFillMode: "both" }}>
+                          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary"><span className="size-1.5 rounded-full bg-primary" /> {t("scanLocated")}</span>
+                          <span className="text-sm font-extrabold" dir="auto">{best.city && best.city !== "?" ? `${best.city} · ` : ""}{best.country}</span>
+                          <span className="num text-[11px] text-muted-foreground" dir="ltr">{scanPlaceText}</span>
+                          {typeof best.lat !== "number" && <span className="text-[11px] text-warning">{t("scanLocatedApprox")}</span>}
+                          <span className="num text-xs font-semibold" dir="ltr">{best.avg != null ? `${best.via ? "≈ " : ""}${best.avg} ms` : "—"}</span>
+                        </div>
+                      </ScanGlobe>
+                    </div>
+                  )}
                   <Suggestions
                     t={t}
                     items={suggestions(rangeStats(scanRows), isRangeBlocked)}
@@ -805,42 +890,44 @@ export default function App() {
                   />
                   <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
                     {state.results.map((s, i) => (
-                      <ResultCard
-                        key={s.ip}
-                        s={s}
-                        t={t}
-                        first={i === 0}
-                        hero={i === 0}
-                        isp={scanNet?.isp}
-                        delay={i * 60}
-                        blocked={isBlocked(s.ip)}
-                        game={state.game}
-                        onBlock={(target, wp) => block(s, state.game, target, wp)}
-                        onUnblock={() => unblockFor(s.ip)}
-                      />
+                      <Tilt key={s.ip} max={i === 0 ? 2.5 : 5} className={i === 0 ? "md:col-span-2 2xl:col-span-3" : undefined}>
+                        <ResultCard
+                          s={s}
+                          t={t}
+                          first={i === 0}
+                          hero={i === 0}
+                          isp={scanNet?.isp}
+                          delay={i * 60}
+                          blocked={isBlocked(s.ip)}
+                          game={state.game}
+                          onBlock={(target, wp) => block(s, state.game, target, wp)}
+                          onUnblock={() => unblockFor(s.ip)}
+                        />
+                      </Tilt>
                     ))}
                   </div>
                 </>
               )}
 
-              <div className="hide-compact grid items-stretch gap-4 md:grid-cols-[1fr_minmax(0,320px)]">
-                <div className="rounded-2xl border border-border bg-card/60 p-4">
-                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                    <ShieldCheck className="size-4 text-primary" /> {t("howTitle")}
-                  </div>
-                  <ul className="space-y-1.5 text-xs leading-relaxed text-muted-foreground">
-                    <li>• {t("how1")}</li>
-                    <li>• {t("how2")}</li>
-                    <li>• {t("how3")}</li>
-                  </ul>
+              <div className="hide-compact rounded-2xl border border-border bg-card/60 p-4">
+                <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                  <ShieldCheck className="size-4 text-primary" /> {t("howTitle")}
                 </div>
-                <PromoPlayer t={t} compact className="min-h-[150px]" />
+                <ul className="space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+                  <li>• {t("how1")}</li>
+                  <li>• {t("how2")}</li>
+                  <li>• {t("how3")}</li>
+                </ul>
               </div>
-            </section>          </main>
+            </section>
+          </main>
+          </>
         )}
         </motion.div>
         )}
       </div>
+
+      <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} placeholder={t("cmdPlaceholder")} empty={t("cmdEmpty")} title={t("cmdTitle")} />
 
       {adminOpen && sync?.configured && (
         <AdminPanel t={t} unlocked={!!sync?.admin} onUnlocked={() => void refreshSync()} onLocked={() => void refreshSync()} onClose={() => setAdminOpen(false)} />

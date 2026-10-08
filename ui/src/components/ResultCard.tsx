@@ -66,7 +66,7 @@ export function ResultCard({ s, t, first, delay = 0, blocked, game, onBlock, onU
   };
 
   return (
-    <ServerCard highlight={first} className={cn("enter lift transition-colors hover:border-primary/40", hero && "gap-5 p-6 md:col-span-2 2xl:col-span-3")} style={{ animationDelay: `${delay}ms` }}>
+    <ServerCard highlight={first} className={cn("enter lift relative transition-colors hover:border-primary/40", first && hero && "beam", hero && "gap-5 p-6 md:col-span-2 2xl:col-span-3")} style={{ animationDelay: `${delay}ms` }}>
       <ServerCardHeader>
         <ServerCardTitle
           region={<span className="inline-flex items-center gap-1.5"><Flag country={s.country} cc={s.cc} />{locationOf(s)}</span>}
@@ -113,9 +113,9 @@ export function ResultCard({ s, t, first, delay = 0, blocked, game, onBlock, onU
         <p className="text-xs leading-relaxed text-muted-foreground">{t("noReplyHint")}</p>
       ) : (
         <div className={cn("grid gap-3", hero && "sm:grid-cols-3 sm:gap-6")}>
-          <ServerCardMeter label={t("ping")} value={s.avg} display={`${s.avg} ms`} max={200} thresholds={[60, 100]} />
-          <ServerCardMeter label={t("jitter")} value={s.jitter ?? 0} display={`${s.jitter ?? 0} ms`} max={40} thresholds={[8, 15]} />
-          <ServerCardMeter label={t("loss")} value={s.loss} display={`${s.loss}%`} max={10} thresholds={[1, 3]} />
+          <ServerCardMeter label={t("ping")} value={s.avg} display={`${s.avg} ms`} unit=" ms" max={200} thresholds={[60, 100]} />
+          <ServerCardMeter label={t("jitter")} value={s.jitter ?? 0} display={`${s.jitter ?? 0} ms`} unit=" ms" max={40} thresholds={[8, 15]} />
+          <ServerCardMeter label={t("loss")} value={s.loss} display={`${s.loss}%`} unit="%" max={10} thresholds={[1, 3]} />
           {s.via && (
             <p className={cn("text-[11px] leading-relaxed text-muted-foreground", hero && "sm:col-span-3")}>
               {t("viaNote")} <span className="num">{s.via.replace(":", " · ")}</span>

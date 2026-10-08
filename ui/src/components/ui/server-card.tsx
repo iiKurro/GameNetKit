@@ -2,6 +2,7 @@
 // Meter thresholds and spec cells reworked for ping / jitter / packet loss.
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { CountUp } from "@/components/ui/count-up";
 
 export type ServerStatus = "good" | "ok" | "bad" | "noreply";
 
@@ -71,27 +72,32 @@ export function ServerCardMeter({
   label,
   value,
   display,
+  unit,
   max,
   thresholds,
 }: {
   label: React.ReactNode;
   value: number;
   display: string;
+  /** when given, the number counts up and this text follows it (display is then only the fallback) */
+  unit?: string;
   /** value that fills the bar */
   max: number;
   /** [warn, crit] in the same unit as value */
   thresholds: [number, number];
 }) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
+  const [grown, setGrown] = React.useState(0);
+  React.useEffect(() => { const id = requestAnimationFrame(() => setGrown(pct)); return () => cancelAnimationFrame(id); }, [pct]);
   const bar = value >= thresholds[1] ? "bg-destructive" : value >= thresholds[0] ? "bg-warning" : "bg-success";
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">{label}</span>
-        <span className="num text-foreground">{display}</span>
+        <span className="num text-foreground">{unit !== undefined ? <CountUp value={value} decimals={value % 1 ? 1 : 0} suffix={unit} /> : display}</span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-        <div className={cn("h-full rounded-full transition-[width] duration-500", bar)} style={{ width: `${pct}%` }} />
+        <div className={cn("h-full rounded-full transition-[width] duration-700 ease-out", bar)} style={{ width: `${grown}%` }} />
       </div>
     </div>
   );

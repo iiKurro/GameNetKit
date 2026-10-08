@@ -1,5 +1,7 @@
 export interface Game {
   name: string;
+  /** the folder-safe name the pictures of the game are asked for by */
+  slug?: string;
   process: string;
   enabled: boolean;
 }
@@ -41,6 +43,9 @@ export interface ServerResult {
   verdict: "good" | "ok" | "bad" | "noreply";
   /** set when the server does not answer ping and the numbers were measured through its cloud region: "gcp:europe-west1", "aws:eu-west-1" */
   via?: string;
+  /** where the server is (a point in its city), when the lookup said so; scans saved before that have only the country */
+  lat?: number | null;
+  lon?: number | null;
 }
 
 export interface AdminRun {
@@ -153,7 +158,7 @@ export interface RunSummary {
   count: number;
   best: ServerResult | null;
   /** the player's provider and country when the scan was made */
-  net?: { isp: string; country: string } | null;
+  net?: { isp: string; country: string; lat?: number; lon?: number } | null;
 }
 
 export interface Run {
@@ -161,7 +166,7 @@ export interface Run {
   time: string;
   game: string;
   results: ServerResult[];
-  net?: { isp: string; country: string } | null;
+  net?: { isp: string; country: string; lat?: number; lon?: number } | null;
 }
 
 export interface State {

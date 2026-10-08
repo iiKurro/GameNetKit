@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Status } from "@/components/ui/status";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ServerResult } from "@/api";
+import { Globe, type GlobePoint } from "@/components/Globe";
 
 type T = (k: Key) => string;
 
@@ -22,6 +23,8 @@ interface Props {
   /** the app has a group server (otherwise the "invite friends" hint makes no sense) */
   sharing: boolean;
   onBlock: (s: ServerResult, game: string, range: string) => Promise<void>;
+  /** every country the matches went to, and where the player is */
+  globe: { origin: { cc: string; label: string } | null; points: GlobePoint[] };
 }
 
 const where = (r: RangeInsight) =>
@@ -30,7 +33,7 @@ const where = (r: RangeInsight) =>
 const fill = (s: string, vars: Record<string, string | number>) => s.replace(/%(\w+)/g, (_, k) => String(vars[k] ?? ""));
 
 /** One or two block suggestions per game, built from everybody's scans, with the numbers that justify them. */
-export function InsightsView({ t, insights, failed, onRetry, peopleCount, sharing, onBlock }: Props) {
+export function InsightsView({ t, insights, failed, onRetry, peopleCount, sharing, onBlock, globe }: Props) {
   const [busy, setBusy] = useState("");
 
   if (insights === null) {
@@ -49,6 +52,16 @@ export function InsightsView({ t, insights, failed, onRetry, peopleCount, sharin
         <h2 className="text-base font-semibold">{t("insightsTitle")}</h2>
         <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">{t("insightsIntro")}</p>
       </div>
+
+      {globe.points.length > 0 && (
+        <div className="enter lift relative overflow-hidden rounded-2xl border border-border bg-card/70">
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-3 px-5 pt-4 text-xs text-muted-foreground">
+            <span className="text-sm font-semibold text-foreground">{t("globeAll")}</span>
+            <span className="hide-compact">{t("globeHint")}</span>
+          </div>
+          <Globe className="h-[340px] w-full" origin={globe.origin} points={globe.points} label={t("globeAll")} />
+        </div>
+      )}
 
       {failed && (
         <div role="alert" className="enter flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 p-4">
