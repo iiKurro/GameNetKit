@@ -1,3 +1,2 @@
-- New: Region lock (Settings > Protection and background). While a game you chose is running, the guard refuses that game's UDP traffic to Amazon and Google data centres outside the Middle East, so it cannot pick a server there. Off by default, per game.
-- It needs the guard running (the guard makes the firewall rules) and is removed when the game closes. If finding a match takes longer or fails, turn it off.
-- Some games rent their servers elsewhere (Call of Duty uses Vultr, for example), which this lock does not cover.
+- Fix: in the light look, the game's name on the banner is readable again, and the banner melts into the page without a visible edge.
+- Region lock (from 1.5.1): Settings > Protection and background. Off by default, per game.

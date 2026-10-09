@@ -49,7 +49,8 @@
 <td width="50%"><img src="docs/media/protect-ar.jpg" alt="إعدادات الحماية وقفل المنطقة"><br><sub><b>الحماية:</b> الحارس والتشغيل مع ويندوز وقفل المنطقة لكل لعبة.</sub></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/media/palette-ar.jpg" alt="الأوامر السريعة"><br><sub><b>Ctrl + K:</b> ابدأ فحص، اختر لعبة، انتقل لصفحة أو غيّر المظهر بدون ماوس.</sub></td>
+<td width="50%"><img src="docs/media/palette-ar.gif" alt="الأوامر السريعة: Ctrl + K"><br><sub><b>Ctrl + K:</b> ابدأ فحص، اختر لعبة، انتقل لصفحة أو غيّر المظهر بدون ماوس.</sub></td>
+<td width="50%"><img src="docs/media/light-ar.jpg" alt="الوضع الفاتح"><br><sub><b>فاتح أو داكن:</b> المظهرين عندك، واختر اللي يريحك.</sub></td>
 </tr>
 </table>
 

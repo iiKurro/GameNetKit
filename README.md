@@ -41,7 +41,8 @@ A small Windows app that **finds the server your game is really connected to** a
 <td width="50%"><img src="docs/media/protect-en.jpg" alt="Protection settings with the region lock"><br><sub><b>Protection:</b> the guard, start with Windows, and the region lock per game.</sub></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/media/palette-en.jpg" alt="Quick commands palette"><br><sub><b>Ctrl + K:</b> start a scan, pick a game, jump to a page or switch the look without touching the mouse.</sub></td>
+<td width="50%"><img src="docs/media/palette-en.gif" alt="Quick commands: Ctrl + K, type, Enter"><br><sub><b>Ctrl + K:</b> start a scan, pick a game, jump to a page or switch the look without touching the mouse.</sub></td>
+<td width="50%"><img src="docs/media/light-en.jpg" alt="The light look"><br><sub><b>Light or dark:</b> both looks, your choice.</sub></td>
 </tr>
 </table>
 
