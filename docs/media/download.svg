@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 96" width="520" height="96" role="img" aria-label="Download for Windows">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#35d07f"/>
+      <stop offset="1" stop-color="#3aa8ff"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#fff" stop-opacity="0.38"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="c"><rect x="8" y="8" width="504" height="80" rx="40"/></clipPath>
+    <filter id="s" x="-10%" y="-30%" width="120%" height="180%"><feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#35d07f" flood-opacity="0.35"/></filter>
+    <style>text { font-family: "Segoe UI", "Inter", Arial, sans-serif; }</style>
+  </defs>
+  <rect x="8" y="8" width="504" height="80" rx="40" fill="url(#g)" filter="url(#s)"/>
+  <g clip-path="url(#c)">
+    <rect x="-160" y="0" width="120" height="96" fill="url(#sheen)" transform="skewX(-20)">
+      <animate attributeName="x" values="-160;640" dur="3.6s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+  <g transform="translate(60 48)" fill="none" stroke="#06140d" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M0 -16 V8 M-12 -4 L0 8 L12 -4"/>
+    <path d="M-16 18 H16"/>
+    <animateTransform attributeName="transform" type="translate" values="60 48;60 52;60 48" dur="1.8s" repeatCount="indefinite"/>
+  </g>
+  <text x="110" y="45" font-size="27" font-weight="800" fill="#06140d">Download for Windows</text>
+  <text x="110" y="70" font-size="15" font-weight="600" fill="#06140d" fill-opacity="0.72">One file · no install · 64-bit</text>
+</svg>

@@ -12,7 +12,7 @@ interface Props {
 }
 
 // the picture melts into the page: solid at the top, then a long, soft fall-off to nothing (so there is no edge where it stops)
-const MELT = "linear-gradient(to bottom, #000 0%, #000 34%, rgba(0,0,0,0.78) 52%, rgba(0,0,0,0.42) 72%, rgba(0,0,0,0.14) 88%, transparent 100%)";
+const MELT = "linear-gradient(to bottom, #000 0%, #000 32%, rgba(0,0,0,0.78) 48%, rgba(0,0,0,0.42) 64%, rgba(0,0,0,0.14) 78%, transparent 90%)";
 
 /**
  * The picture of the chosen game, wide, at the top of the scan page. It dissolves downwards into the page, drifts a little against the
@@ -49,13 +49,15 @@ export function GameBanner({ name, slug, note, className }: Props) {
           exit={{ opacity: 0, transition: { duration: 0.5 } }}
         >
           <GameCover name={name} slug={slug} kind="hero" className="size-full" />
+          {/* a soft dark foot under the picture, so the name stays readable in the light look as well (it melts away with the picture) */}
+          <div aria-hidden className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/50 to-transparent" />
         </motion.div>
       </AnimatePresence>
       {/* a little darkness at the very top, so the picture sits in the card instead of on it */}
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/35 to-transparent" />
       <motion.div style={{ x: textX }} className="absolute inset-x-0 bottom-[4.5rem] px-6">
-        <h2 className="truncate text-3xl font-extrabold leading-tight text-foreground drop-shadow-[0_2px_14px_rgba(0,0,0,0.75)]" dir="auto">{name}</h2>
-        {note && <p className="num mt-0.5 text-xs font-medium text-foreground/75 drop-shadow-[0_1px_6px_rgba(0,0,0,0.7)]">{note}</p>}
+        <h2 className="truncate text-3xl font-extrabold leading-tight text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.75)]" dir="auto">{name}</h2>
+        {note && <p className="num mt-0.5 text-xs font-medium text-white/80 drop-shadow-[0_1px_6px_rgba(0,0,0,0.7)]">{note}</p>}
       </motion.div>
     </div>
   );
