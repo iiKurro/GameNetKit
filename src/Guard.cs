@@ -1,4 +1,4 @@
-﻿// The guard: an elevated background process (started once, one UAC prompt) that applies a game's blocks while that game
+// The guard: an elevated background process (started once, one UAC prompt) that applies a game's blocks while that game
 // is running and removes them when it is closed. Blocks marked "always" are not its business.
 //   GameNetKit.exe --guard            started by the UI; stops when guard-stop.flag appears (or on reboot / logoff)
 // State is exchanged through files in the data folder: blocks.json (read), guard.json (written every 2 s by its own thread, so a slow
@@ -36,7 +36,8 @@ namespace GameNetKit
             { "Modern Warfare 3", new KeyValuePair<string, object>("steam", 3595270L) },
             { "Modern Warfare 4", new KeyValuePair<string, object>("steam", 4435490L) },
             { "Fortnite", new KeyValuePair<string, object>("epic", "fortnite") },
-            { "ARC Raiders", new KeyValuePair<string, object>("steam", 1808500L) }
+            { "ARC Raiders", new KeyValuePair<string, object>("steam", 1808500L) },
+            { "AION 2", new KeyValuePair<string, object>("steam", 3393110L) }
         };
 
         static void AddArtSources(List<Dictionary<string, object>> list)
@@ -96,7 +97,9 @@ namespace GameNetKit
                 Game("Modern Warfare 4", "cod.exe"),
                 Game("Fortnite", "FortniteClient-Win64-Shipping.exe"),
                 // Task Manager shows PioneerGame.exe for ARC Raiders (the -Win64-Shipping name is covered too, in case a build uses it)
-                Game("ARC Raiders", "PioneerGame.exe|PioneerGame-Win64-Shipping.exe")
+                Game("ARC Raiders", "PioneerGame.exe|PioneerGame-Win64-Shipping.exe"),
+                // AION 2 (Unreal Engine): Steam app 3393110, the game's exe is Aion2\Binaries\Win64\AION2.exe
+                Game("AION 2", "AION2.exe")
             };
         }
 
