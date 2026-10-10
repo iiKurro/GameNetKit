@@ -1,2 +1,1 @@
-- Fix: in the light look, the game's name on the banner is readable again, and the banner melts into the page without a visible edge.
-- Region lock (from 1.5.1): Settings > Protection and background. Off by default, per game.
+- New game: AION 2 (Steam). Pick it in the games strip, scan it while it runs, and its picture comes from its store page.
