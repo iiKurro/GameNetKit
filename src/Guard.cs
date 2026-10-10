@@ -99,9 +99,12 @@ namespace GameNetKit
                 // Task Manager shows PioneerGame.exe for ARC Raiders (the -Win64-Shipping name is covered too, in case a build uses it)
                 Game("ARC Raiders", "PioneerGame.exe|PioneerGame-Win64-Shipping.exe"),
                 // AION 2 (Unreal Engine): Steam app 3393110, the game's exe is Aion2\Binaries\Win64\AION2.exe
-                Game("AION 2", "AION2.exe")
+                Tcp(Game("AION 2", "AION2.exe"))
             };
         }
+
+        // an MMO: one lasting TCP connection to the server instead of a UDP match (the scan reads the game's connections, see Worker.RunConnections)
+        static Dictionary<string, object> Tcp(Dictionary<string, object> g) { g["mode"] = "tcp"; return g; }
 
         static Dictionary<string, object> Game(string name, string process)
         {

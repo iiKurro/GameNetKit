@@ -103,9 +103,9 @@ export function ResultCard({ s, t, first, delay = 0, blocked, game, onBlock, onU
 
       {!hero && (
         <ServerCardSpecs>
-          <ServerCardSpec label={t("packets")}>{s.packets}</ServerCardSpec>
+          {!s.tcp && <ServerCardSpec label={t("packets")}>{s.packets}</ServerCardSpec>}
           <ServerCardSpec label={t("port")}>{s.port}</ServerCardSpec>
-          <ServerCardSpec label="KB">{s.kb}</ServerCardSpec>
+          {!s.tcp && <ServerCardSpec label="KB">{s.kb}</ServerCardSpec>}
         </ServerCardSpecs>
       )}
 
@@ -126,12 +126,14 @@ export function ResultCard({ s, t, first, delay = 0, blocked, game, onBlock, onU
 
       {hero && (
         <p className="num text-center text-xs text-muted-foreground">
-          {s.packets} {t("packets")} · {t("port")} {s.port} · {s.kb} KB
+          {s.tcp ? `${t("port")} ${s.port} · TCP` : `${s.packets} ${t("packets")} · ${t("port")} ${s.port} · ${s.kb} KB`}
         </p>
       )}
 
       <div className="mt-auto flex flex-col gap-2 border-t border-border pt-3">
-        {isV6(s.ip) && !blocked ? (
+        {s.tcp && !blocked ? (
+          <p className="text-[11px] text-muted-foreground">{t("tcpNote")}</p>
+        ) : isV6(s.ip) && !blocked ? (
           <p className="text-[11px] text-muted-foreground">{t("v6Note")}</p>
         ) : blocked ? (
           <Button variant="secondary" size="sm" disabled={busy} onClick={() => run(() => onUnblock())}>

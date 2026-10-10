@@ -410,6 +410,84 @@ namespace GameNetKit
             return d;
         }
 
+        // ---- TCP connections of given processes: for games that keep one long connection to their server (MMOs) instead of a UDP match ----
+        [DllImport("iphlpapi.dll", SetLastError = true)]
+        static extern uint GetExtendedTcpTable(IntPtr table, ref int size, bool order, int af, int tableClass, uint reserved);
+
+        public class Conn { public string Ip; public int Port; }
+
+        // the established connections of the processes to public addresses (IPv4 and IPv6); the remote end is known for TCP, unlike UDP
+        public static List<Conn> TcpConnections(HashSet<int> pids)
+        {
+            var res = new List<Conn>();
+            ReadTcpTable(pids, 2, res);
+            ReadTcpTable(pids, 23, res);
+            return res;
+        }
+
+        // af 2: rows of 24 bytes (state, local addr, local port, remote addr, remote port, pid)
+        // af 23: rows of 56 bytes (local addr[16], scope, port, remote addr[16], scope, port, state, pid)
+        static void ReadTcpTable(HashSet<int> pids, int af, List<Conn> into)
+        {
+            int rowSize = af == 2 ? 24 : 56;
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                int size = 0;
+                GetExtendedTcpTable(IntPtr.Zero, ref size, true, af, 5, 0);   // 5 = TCP_TABLE_OWNER_PID_ALL
+                IntPtr buf = Marshal.AllocHGlobal(size);
+                try
+                {
+                    uint rc = GetExtendedTcpTable(buf, ref size, true, af, 5, 0);
+                    if (rc == 122) continue;
+                    if (rc != 0) return;
+                    int n = Marshal.ReadInt32(buf);
+                    IntPtr p = IntPtr.Add(buf, 4);
+                    for (int i = 0; i < n; i++)
+                    {
+                        int state = Marshal.ReadInt32(p, af == 2 ? 0 : 48);
+                        int pid = Marshal.ReadInt32(p, af == 2 ? 20 : 52);
+                        if (state == 5 && pids.Contains(pid))      // 5 = established
+                        {
+                            uint rawPort = (uint)Marshal.ReadInt32(p, af == 2 ? 16 : 44);
+                            int port = (int)(((rawPort & 0xFF) << 8) | ((rawPort >> 8) & 0xFF));
+                            byte[] addr;
+                            if (af == 2) addr = BitConverter.GetBytes(Marshal.ReadInt32(p, 12));
+                            else { addr = new byte[16]; Marshal.Copy(IntPtr.Add(p, 24), addr, 0, 16); }
+                            string ip = new IPAddress(addr).ToString();
+                            if (IsPublicIp(ip)) into.Add(new Conn { Ip = ip, Port = port });
+                        }
+                        p = IntPtr.Add(p, rowSize);
+                    }
+                    return;
+                }
+                finally { Marshal.FreeHGlobal(buf); }
+            }
+        }
+
+        // ping, jitter and loss from the time a TCP connection to the game's own port takes to open (for servers that do not answer ping)
+        public static PingStat MeasureTcp(string ip, int port, int count)
+        {
+            count = Math.Max(5, Math.Min(count, 20));
+            IPAddress addr;
+            if (!IPAddress.TryParse(ip, out addr)) return null;
+            var times = new List<int>();
+            for (int i = 0; i < count; i++)
+            {
+                try
+                {
+                    using (var c = new System.Net.Sockets.TcpClient(addr.AddressFamily))
+                    {
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        var ar = c.BeginConnect(addr, port, null, null);
+                        if (ar.AsyncWaitHandle.WaitOne(1500) && c.Connected) { sw.Stop(); times.Add((int)Math.Max(1, sw.ElapsedMilliseconds)); }
+                    }
+                }
+                catch { }
+                Thread.Sleep(200);
+            }
+            return StatsOf(times, count);
+        }
+
         public static void CollectUdpPorts(HashSet<int> pids, HashSet<int> into)
         {
             CollectUdpPorts(pids, into, 2);    // IPv4

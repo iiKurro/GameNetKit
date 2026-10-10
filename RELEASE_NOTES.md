@@ -1,1 +1,2 @@
-- New game: AION 2 (Steam). Pick it in the games strip, scan it while it runs, and its picture comes from its store page.
+- AION 2 (and other MMOs that keep one connection to their server) now scans correctly: the app reads the game's own connections instead of waiting for a UDP match, finds the game server, and measures its ping, jitter and loss (no packet capture, no admin prompt for this kind of game).
+- The result of such a game does not show the packet and KB counts, and the UDP block is not offered for it.

@@ -36,6 +36,8 @@ export interface ServerResult {
   host: string;
   packets: number;
   kb: number;
+  /** the game keeps one TCP connection to its server (an MMO): no packets were read, and the UDP block does not apply */
+  tcp?: boolean;
   avg: number | null;
   max: number | null;
   jitter: number | null;

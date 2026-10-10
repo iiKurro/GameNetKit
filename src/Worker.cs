@@ -1,4 +1,4 @@
-﻿// Elevated worker: waits for the game, captures UDP headers with pktmon, measures servers, writes state.json.
+// Elevated worker: waits for the game, captures UDP headers with pktmon, measures servers, writes state.json.
 // Runs as a separate (admin) process so the UI itself never needs elevation.
 using System;
 using System.Collections.Generic;
@@ -61,12 +61,13 @@ namespace GameNetKit
             totalSeconds = a.ContainsKey("seconds") ? int.Parse(a["seconds"]) : 240;
             int top = a.ContainsKey("top") ? int.Parse(a["top"]) : 8;
             int pings = a.ContainsKey("pings") ? int.Parse(a["pings"]) : 10;
+            mode = a.ContainsKey("mode") ? a["mode"] : "";
             bool demo = a.ContainsKey("demo");
             demoMode = demo;
             Directory.CreateDirectory(dir);
             try
             {
-                if (demo) RunDemo(); else RunReal(proc, top, pings);
+                if (demo) RunDemo(); else if (mode == "tcp") RunConnections(proc, top, pings); else RunReal(proc, top, pings);
                 return 0;
             }
             catch (Cancelled) { errorCode = "cancelled"; error = ""; Put("error"); return 0; }
@@ -159,6 +160,54 @@ namespace GameNetKit
             Measure(servers.Take(top).ToList(), pings);
         }
 
+        // ------------------------------------------------------------------ games with one long TCP connection (MMOs)
+        // No match to capture: the game is logged in and Windows lists its connections. Nothing is captured, so no packets are read.
+        static bool IsWebPort(int p) { return p == 80 || p == 443 || p == 8080 || p == 8443; }
+
+        static void RunConnections(string proc, int top, int pings)
+        {
+            totalSeconds = 20; secondsLeft = totalSeconds;
+            Put("waiting_game");
+            while (Running(proc).Count == 0) { CheckCancel(); Thread.Sleep(1000); }
+
+            // in the world = a lasting connection to a port that is not the web (the game server); the button works too
+            Put("ready");
+            string goFlag = Path.Combine(dir, "go.flag");
+            int hits = 0;
+            while (hits < 3 && !File.Exists(goFlag))
+            {
+                CheckCancel();
+                var c = Analyzer.TcpConnections(new HashSet<int>(Running(proc).Select(p => p.Id)));
+                hits = c.Any(x => !IsWebPort(x.Port)) ? hits + 1 : 0;
+                Thread.Sleep(1000);
+            }
+
+            var seen = new Dictionary<string, Srv>();
+            DateTime end = DateTime.Now.AddSeconds(totalSeconds);
+            while (DateTime.Now < end)
+            {
+                CheckCancel();
+                foreach (var c in Analyzer.TcpConnections(new HashSet<int>(Running(proc).Select(p => p.Id))))
+                {
+                    string key = c.Ip + "|" + c.Port;
+                    Srv s;
+                    if (!seen.TryGetValue(key, out s)) seen[key] = s = new Srv { Ip = c.Ip, Port = c.Port };
+                    s.Packets++;      // here: the seconds the connection was seen
+                }
+                secondsLeft = (int)Math.Ceiling((end - DateTime.Now).TotalSeconds);
+                portCount = seen.Count;
+                Put("capturing");
+                Thread.Sleep(1000);
+            }
+            secondsLeft = 0;
+
+            // the game server first (a lasting connection to a non-web port), then what was seen longest
+            var list = seen.Values.OrderBy(s => IsWebPort(s.Port) ? 1 : 0).ThenByDescending(s => s.Packets).ToList();
+            if (list.Count == 0) throw new Fail("nodata", "the game has no connection to a server right now (log in to a character first)");
+            Put("measuring");
+            Measure(list.Take(top).ToList(), pings, true);
+        }
+
         // A match = one public address receiving a steady stream of UDP (>= 200 packets in 4 s, twice in a row).
         // Menus and launcher traffic stay far below that. The manual button (go.flag) always works too.
         static void WaitForMatch(string proc)
@@ -209,7 +258,10 @@ namespace GameNetKit
 
         static Dictionary<string, object> ownNet;
 
-        static void Measure(List<Srv> list, int pings)
+        static void Measure(List<Srv> list, int pings) { Measure(list, pings, false); }
+
+        // tcp: the servers are known from the game's own connections (their port answers a connection), so a server that does not answer ping is timed that way
+        static void Measure(List<Srv> list, int pings, bool tcp)
         {
             var netTask = Task.Factory.StartNew(() => Analyzer.OwnNet());
             var geo = Analyzer.Geo(list.Select(s => s.Ip));
@@ -218,6 +270,11 @@ namespace GameNetKit
             {
                 var ps = Analyzer.MeasurePing(s.Ip, pings);
                 string via = "";
+                if (ps.Avg == null && tcp)
+                {
+                    var tp = Analyzer.MeasureTcp(s.Ip, s.Port, pings);
+                    if (tp != null && tp.Avg != null) ps = tp;
+                }
                 if (ps.Avg == null)
                 {
                     // the server does not answer ping: measure through its cloud region instead (see Analyzer.MeasureRegion)
@@ -236,7 +293,7 @@ namespace GameNetKit
                     { "provider", g != null ? (string)g["isp"] : "?" },
                     { "host", Analyzer.Ptr(s.Ip) },
                     { "avg", ps.Avg }, { "max", ps.Max }, { "jitter", ps.Jitter }, { "loss", ps.Loss },
-                    { "verdict", Analyzer.Verdict(ps) }, { "via", via },
+                    { "verdict", Analyzer.Verdict(ps) }, { "via", via }, { "tcp", tcp },
                     // where the server is (a point in its city): the globe pins it exactly
                     { "lat", g != null && g.ContainsKey("lat") ? (object)Math.Round(Convert.ToDouble(g["lat"]), 2) : null },
                     { "lon", g != null && g.ContainsKey("lon") ? (object)Math.Round(Convert.ToDouble(g["lon"]), 2) : null }
@@ -251,6 +308,7 @@ namespace GameNetKit
         }
 
         static bool demoMode;
+        static string mode = "";
 
         // Saves the finished run as a history entry (id = csv file name) so the UI can list and delete it later.
         static void SaveHistory()

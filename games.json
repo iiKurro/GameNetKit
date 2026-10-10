@@ -4,5 +4,5 @@
   { "name": "Modern Warfare 3", "process": "cod.exe|cod23-cod.exe|title:Modern Warfare&III", "enabled": true, "steam": 3595270 },
   { "name": "Modern Warfare 4", "process": "cod.exe", "enabled": true, "steam": 4435490 },
   { "name": "Fortnite", "process": "FortniteClient-Win64-Shipping.exe", "enabled": true, "epic": "fortnite" },
-  { "name": "AION 2", "process": "AION2.exe", "enabled": true, "steam": 3393110 }
+  { "name": "AION 2", "process": "AION2.exe", "enabled": true, "steam": 3393110, "mode": "tcp" }
 ]

@@ -17,7 +17,7 @@ namespace GameNetKit
 {
     public static class Program
     {
-        public static string Version = "1.5.3";   // --fakeversion x.y.z overrides it (used only to test the update flow)
+        public static string Version = "1.5.4";   // --fakeversion x.y.z overrides it (used only to test the update flow)
         public const string Repo = "iiKurro/GameNetKit";
 
         public static string DataDir = Path.Combine(
@@ -659,6 +659,7 @@ namespace GameNetKit
 
             string a = "--worker 1 --dir \"" + Program.DataDir + "\" --game \"" + gameName + "\" --process \"" + g["process"] + "\"" +
                        " --seconds " + Cfg("captureSeconds", 240) + " --top " + Cfg("topServers", 8) + " --pings " + Cfg("pingCount", 10) +
+                       (g.ContainsKey("mode") ? " --mode \"" + g["mode"] + "\"" : "") +
                        (demo ? " --demo 1" : " --user \"" + Environment.UserDomainName + "\\" + Environment.UserName + "\"");
 
             ThreadPool.QueueUserWorkItem(delegate
